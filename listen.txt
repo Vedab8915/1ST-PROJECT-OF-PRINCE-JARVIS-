@@ -1,0 +1,119 @@
+async def _listen_audio(self):
+        print("[JARVIS] 🎤 Mic started")
+        loop = asyncio.get_event_loop()
+
+        def callback(indata, frames, time_info, status):
+            # ── Wake-word gate ───────────────────────────────────────────────
+            # While asleep, the mic audio NEVER goes to Gemini (nothing is
+            # streamed, so JARVIS can't respond to speech not addressed to it and
+            # nothing leaves the machine). Frames are instead handed to the local
+            # detector, which runs its model in ITS OWN thread — the cost here is
+            # only a queue push, so the audio path is never slowed. When wake word
+            # is off (default) or we're awake, this is a single boolean check.
+            if self._wake_enabled and not self._awake:
+                det = self._wake_detector
+                if det is not None:
+                    det.feed(indata)
+                return
+            with self._speaking_lock:
+                jarvis_speaking = self._is_speaking
+
+            # ── Barge-in ─────────────────────────────────────────────────────
+            # While JARVIS talks the mic is not streamed, but it is still worth
+            # listening to locally: if the user starts speaking, cut the answer
+            # short the way a person would stop when interrupted.
+            #
+            # The whole difficulty is echo — on speakers the mic hears JARVIS.
+            # So the test is not "is the mic loud" but "is the mic louder than
+            # the echo of what we are playing right now", sustained long enough
+            # that a cough or a keystroke cannot trigger it.
+            if jarvis_speaking:
+                # Nothing is streamed while JARVIS talks.
+                #
+                # Interrupting by voice used to live here: `EchoGuard` can pick a
+                # user out from under our own echo, and `core/echo.py` still does
+                # that for the tail below. Re-enabling is small — classify each
+                # block here and call interrupt() after `required_blocks` of
+                # agreement — but it depends on the listener's room, so it stays
+                # out until it can be tried on real hardware.
+                return
+
+            # ── Echo tail ────────────────────────────────────────────────────
+            # The speaking flag has dropped but the speakers have not finished.
+            # Sending this to the model is how an assistant hears itself, decides
+            # it was addressed, and answers its own last sentence. The microphone
+            # stays OPEN — the guard only drops blocks that are our own voice, so
+            # replying the instant it stops still works.
+            if self._tail_active():
+                try:
+                    if not self._echo.is_user_speech(
+                            indata, SEND_SAMPLE_RATE, _pcm_level(indata)):
+                        return
+                    self._tail_until = 0.0      # a real voice ends the tail early
+                except Exception:
+                    return
+            elif self._echo._hist:
+                self._echo.reset()
+
+            # ── Push-to-talk ─────────────────────────────────────────────────
+            # When it is on the microphone is closed by default and the chord
+            # opens it, which is the whole point: nothing leaves the machine
+            # unless you are holding the key.
+            if self._ptt_enabled and not self._ptt_held:
+                return
+
+            if not self.ui.muted and not self._phone_active:
+                data = indata.tobytes()
+                loop.call_soon_threadsafe(
+                    self.out_queue.put_nowait,
+                    {"data": data, "mime_type": "audio/pcm"}
+                )
+                # Feed the live mic level to the HUD so the waveform reacts to
+                # the user's actual voice while listening. Purely cosmetic — any
+                # failure here must never disturb the mic.
+                try:
+                    self.ui.set_audio_level(_pcm_level(indata))
+                except Exception:
+                    pass
+
+        try:
+            def _open_mic(dev):
+                return sd.InputStream(
+                    samplerate=SEND_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    blocksize=CHUNK_SIZE,
+                    device=dev,
+                    callback=callback,
+                )
+
+            # Which microphone. resolve() returns None for "system default" and
+            # for a saved device that is no longer present — so a headset
+            # unplugged since the last run falls back to the built-in mic
+            # instead of raising on startup and taking the session with it.
+            _mic_name = get_input_device()
+            _mic_dev  = audio_devices.resolve(_mic_name, "input")
+            if _mic_dev is not None:
+                print(f"[JARVIS] 🎤 Input device: {_mic_name}")
+            try:
+                _mic_stream = _open_mic(_mic_dev)
+            except Exception as _e:
+                # A device the picker listed but the driver will not open right
+                # now — exclusive mode, a webcam already in use, a virtual mic
+                # whose source went away. Chosen hardware failing must never
+                # mean the assistant cannot hear at all.
+                if _mic_dev is None:
+                    raise
+                print(f"[JARVIS] ⚠️  Mic '{_mic_name}' failed: {_e} — using default")
+                self.ui.write_log(
+                    f"SYS: Microphone '{_mic_name}' unavailable — using system default."
+                )
+                _mic_stream = _open_mic(None)
+
+            with _mic_stream:
+                print("[JARVIS] 🎤 Mic stream open")
+                while True:
+                    await asyncio.sleep(0.1)
+        except Exception as e:
+            print(f"[JARVIS] ❌ Mic: {e}")
+            raise
