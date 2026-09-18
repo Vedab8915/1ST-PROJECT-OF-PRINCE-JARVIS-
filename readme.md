@@ -25,9 +25,7 @@ It's not just an assistant — it's an extension of your digital life.
 
 ### Core Features
 | Feature | Description |
-|---|---|
-| 🧑‍🎤 Holographic Avatar | An animated human head in the HUD — real facial geometry, lit and drawn in software, no GPU or extra packages |
-| 👄 Real Lip-Sync | ~50 mouth shapes a second from the audio's formants **and** the transcript — closures, spreads and rounds, not a volume meter |
+
 | 🌍 Language-Free Mouth | Articulation is derived by Unicode reduction, so Latin, Cyrillic and Greek scripts all work from one rule set — and scripts that hide pronunciation fall back cleanly |
 | 🙂 Facial Acting | Brows track the phrase, gaze saccades between fixations, natural blinking, a small nod on stressed syllables |
 | 😐 Face as Status | Looks away while thinking, meets your eyes while listening, lids fall while asleep, glances down at new content |
@@ -322,5 +320,5 @@ Engineered by P.R.I.N.C.E for a real-world JARVIS-style assistant.
 
 | Platform | Link |
 | --- | --- |
-| YouTube | [@P.R.I.N.C.E]([JARVIS Project]) |
-| Instagram | [@P.R.I.N.C.E](https://www.instagram.com/fatihmakes) |
+| Number | ( 7416222920) |
+| Instagram (https://_.prince_nx16._ ) |
