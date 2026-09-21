@@ -76,10 +76,23 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 
 
 # ── Assistant voice ──────────────────────────────────────────────────────────
-# Gemini Live prebuilt voices. Names are proper nouns — identical in every
-# language, so this list is safe to show verbatim in any locale.
+# Gemini Live voice IDs must be sent unchanged to the API.  The interface uses
+# the friendly labels below instead, so people can choose a voice by style
+# without needing to know the provider's internal name.
 AVAILABLE_VOICES = ["Charon", "Puck", "Kore", "Fenrir", "Aoede"]
 DEFAULT_VOICE    = "Charon"
+VOICE_DISPLAY_NAMES = {
+    "Charon": "Tony",
+    "Puck":   "Lobo",
+    "Kore":   "Nikki",
+    "Fenrir": "Hawk",
+    "Aoede":  "Joshi",
+}
+
+
+def get_voice_display_name(voice_name: str) -> str:
+    """Return the user-facing label while preserving Gemini's internal ID."""
+    return VOICE_DISPLAY_NAMES.get(voice_name, VOICE_DISPLAY_NAMES[DEFAULT_VOICE])
 
 
 def get_voice() -> str:

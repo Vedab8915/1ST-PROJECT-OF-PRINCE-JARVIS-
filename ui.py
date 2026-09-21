@@ -1648,10 +1648,9 @@ class CustomizeOverlay(QWidget):
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
 
-        # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
-        # Names are language-neutral proper nouns, so the row reads the same in
-        # every locale. Selecting one and applying rebuilds the Live session.
-        from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE
+        # ── Assistant voice ──────────────────────────────────────────────────
+        # Buttons use friendly labels; the internal Gemini voice ID stays hidden.
+        from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE, get_voice_display_name
         lay.addSpacing(4)
         lay.addWidget(_lbl("ASSISTANT VOICE", 8, color=C.TEXT_DIM,
                             align=Qt.AlignmentFlag.AlignLeft))
@@ -1660,15 +1659,8 @@ class CustomizeOverlay(QWidget):
             self._sel_voice = DEFAULT_VOICE
         self._voice_btns: dict[str, QPushButton] = {}
         voice_row = QHBoxLayout(); voice_row.setSpacing(4)
-        _voice_display_names = {
-            "Charon": "MODI",
-            "Puck": "ROLEX",
-            "Fenrir": "ARJUN",
-            "Leda": "SANA",
-            "Aoede": "MAAYA",
-        }
         for _v in AVAILABLE_VOICES:
-            b = QPushButton(_v)
+            b = QPushButton(get_voice_display_name(_v))
             b.setCheckable(True)
             b.setFixedHeight(28)
             b.setFont(QFont(UI_FONT, 8, QFont.Weight.Bold))
@@ -3215,7 +3207,9 @@ class JarvisSettingsHub(_HudOverlay):
         lay.addWidget(card1)
 
         # 2. Voice Matrix Card
-        from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE, get_voice
+        from memory.config_manager import (
+            AVAILABLE_VOICES, DEFAULT_VOICE, get_voice, get_voice_display_name,
+        )
         card2, c2_lay = self._card_frame()
         c2_lay.addWidget(self._sec_label("◈  GEMINI LIVE VOCAL MATRIX"))
         c2_lay.addWidget(self._dim_label("Select neural voice engine for live speech responses"))
@@ -3223,15 +3217,8 @@ class JarvisSettingsHub(_HudOverlay):
         self._sel_voice = get_voice()
         self._voice_pills: dict[str, QPushButton] = {}
         v_row = QHBoxLayout(); v_row.setSpacing(6)
-        _voice_display_names = {
-            "Charon": "MODI",
-            "Puck": "ROLEX",
-            "Fenrir": "ARJUN",
-            "Leda": "SANA",
-            "Aoede": "MAAYA",
-        }
         for vname in AVAILABLE_VOICES:
-            b = QPushButton(vname)
+            b = QPushButton(get_voice_display_name(vname))
             b.setFixedHeight(30)
             b.setFont(QFont(UI_FONT, 8, QFont.Weight.Bold))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3437,9 +3424,11 @@ class JarvisSettingsHub(_HudOverlay):
         self._refresh_voice_pills()
 
     def _refresh_voice_pills(self):
+        from memory.config_manager import get_voice_display_name
         for name, b in self._voice_pills.items():
+            label = get_voice_display_name(name)
             if name == self._sel_voice:
-                b.setText(f"✓ {name}")
+                b.setText(f"✓ {label}")
                 b.setStyleSheet(f"""
                     QPushButton {{
                         background: {C.PRI_GHO}; color: {C.PRI};
@@ -3447,7 +3436,7 @@ class JarvisSettingsHub(_HudOverlay):
                     }}
                 """)
             else:
-                b.setText(name)
+                b.setText(label)
                 b.setStyleSheet(f"""
                     QPushButton {{
                         background: rgba(0, 10, 18, 0.7); color: {C.TEXT_MED};
@@ -6895,7 +6884,8 @@ class MainWindow(QMainWindow):
             if color_changed:
                 self._log.append_log(f"SYS: UI colour applied — {ui_color}")
             if voice_changed:
-                self._log.append_log(f"SYS: Voice set — {voice}")
+                from memory.config_manager import get_voice_display_name
+                self._log.append_log(f"SYS: Voice set — {get_voice_display_name(voice)}")
         except Exception as e:
             self._log.append_log(f"ERR: Config save failed — {e}")
         if voice_changed and self.on_voice_change:
