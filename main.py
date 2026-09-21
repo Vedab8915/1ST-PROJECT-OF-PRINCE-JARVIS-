@@ -826,7 +826,9 @@ class JarvisLive:
         key    = self._dashboard.new_key()
         url    = self._dashboard.get_url()
         manual = self._dashboard.get_manual_url()
-        return url, key, f"{url}/auto-login?key={key}", manual
+        # The dashboard reads the pairing key from the query string on its home
+        # page.  (There is deliberately no separate auto-login endpoint.)
+        return url, key, f"{url}/?key={key}", manual
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -2301,7 +2303,16 @@ def main():
         # --- Security Interceptor ---
         face_name = None
         from memory.config_manager import get_plugin_enabled, get_plugin_config
-        if get_plugin_enabled("face_authenticate"):
+        # Face authentication is an optional plugin.  A partial download used to
+        # enable it by default, then crash the worker thread before JARVIS could
+        # start because there was no ``plugins`` package to import.
+        face_plugin = BASE_DIR / "plugins" / "face_auth.py"
+        if get_plugin_enabled("face_authenticate") and not face_plugin.is_file():
+            from memory.config_manager import save_plugin_enabled
+            save_plugin_enabled("face_authenticate", False)
+            print("[SECURITY] Face authentication disabled: plugins/face_auth.py is not installed.")
+            ui.write_log("SYS: Face authentication is unavailable (plugin not installed); disabled.")
+        elif get_plugin_enabled("face_authenticate"):
             cfg = get_plugin_config("face_authenticate")
             if cfg.get("startup_required", True):
                 from plugins.face_auth import get_face_auth_manager
