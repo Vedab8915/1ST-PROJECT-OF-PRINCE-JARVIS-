@@ -34,6 +34,8 @@ from PyQt6.QtWidgets import (
     QInputDialog, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 # ── P.R.I.N.C.E identity ─────────────────────────────────────────────────────
 # One constant drives the window title, header badge and protocol display.
@@ -563,6 +565,8 @@ class HudCanvas(QWidget):
         self.grid_brightness = 0.42
 
         self._tick       = 0
+        self._anim_time  = 0.0
+        self._anim_state = "INITIALISING"
         self._scale      = 1.0
         self._tgt_scale  = 1.0
         self._halo       = 55.0
@@ -705,6 +709,17 @@ class HudCanvas(QWidget):
     def _step(self):
         self._tick += 1
         now = time.time()
+        state = ("MUTED" if self.muted else
+                 "SPEAKING" if self.speaking else (self.state or "").upper())
+        if state != self._anim_state:
+            self._anim_state = state
+        thinking = state == "THINKING"
+        processing = state == "PROCESSING"
+        listening = state == "LISTENING"
+        initializing = state in ("INITIALISING", "INITIALIZING")
+        sleeping = state in ("SLEEPING", "STANDBY", "OFFLINE")
+        active = thinking or processing or listening or initializing
+        self._anim_time += 1.0 / 60.0
 
         # ── Live audio reactivity ────────────────────────────────────────────
         # Audio threads push peaks into _live_amp; decay it toward silence so
@@ -714,10 +729,25 @@ class HudCanvas(QWidget):
         amp = self._amp_disp
 
         # Slow "breathing" base target (random shimmer), refreshed on a timer.
-        if now - self._last_t > (0.12 if self.speaking else 0.5):
+        if now - self._last_t > (0.12 if state == "SPEAKING" else (0.18 if active else 0.5)):
             if self.speaking:
                 self._base_scale = 1.03
                 self._base_halo  = 122.0
+            elif processing:
+                self._base_scale = 1.008
+                self._base_halo  = 82.0
+            elif thinking:
+                self._base_scale = 1.0
+                self._base_halo  = 64.0
+            elif listening:
+                self._base_scale = 1.006
+                self._base_halo  = 72.0
+            elif initializing:
+                self._base_scale = 1.0
+                self._base_halo  = 58.0
+            elif sleeping:
+                self._base_scale = 0.985
+                self._base_halo  = 20.0
             elif self.muted:
                 self._base_scale = random.uniform(0.998, 1.002)
                 self._base_halo  = random.uniform(15, 28)
@@ -728,33 +758,66 @@ class HudCanvas(QWidget):
 
         # Every frame, the live audio level lifts the target on top of the base
         # — this is what makes the core visibly pulse to the actual voice.
-        if self.muted:
+        if state == "MUTED":
             self._tgt_scale, self._tgt_halo = self._base_scale, self._base_halo
-        elif self.speaking:
+        elif state == "SPEAKING":
             self._tgt_scale = self._base_scale + amp * 0.13
             self._tgt_halo  = self._base_halo  + amp * 95.0
+        elif active:
+            # Each mode has its own pulse rhythm: calm thought, quick work,
+            # steady listening, and a short startup swell.
+            rate = 1.0 if thinking else (3.2 if processing else (1.8 if listening else 2.5))
+            depth = 0.010 if thinking else (0.022 if processing else (0.008 if listening else 0.035))
+            phase = self._anim_time * rate
+            self._tgt_scale = self._base_scale + math.sin(phase) * depth
+            glow = 10.0 if thinking else (24.0 if processing else (18.0 if listening else 30.0))
+            self._tgt_halo = self._base_halo + glow * (0.5 + 0.5 * math.sin(phase))
+        elif sleeping:
+            self._tgt_scale = self._base_scale + math.sin(self._anim_time * 0.45) * 0.004
+            self._tgt_halo = self._base_halo + 4.0 * (0.5 + 0.5 * math.sin(self._anim_time * 0.45))
         else:
             self._tgt_scale = self._base_scale + amp * 0.06
             self._tgt_halo  = self._base_halo  + amp * 75.0
 
-        sp = 0.38 if self.speaking else (0.30 if amp > 0.02 else 0.15)
+        sp = 0.38 if state == "SPEAKING" else (0.28 if active else (0.12 if sleeping or state == "MUTED" else 0.18))
         self._scale += (self._tgt_scale - self._scale) * sp
         self._halo  += (self._tgt_halo  - self._halo)  * sp
 
         # Rings/scanners spin faster while speaking, reacting to loudness.
         boost  = 1.0 + amp * 1.6
-        speeds = ([1.3, -0.9, 2.0] if self.speaking else [0.55, -0.35, 0.9])
+        speeds = {
+            "INITIALISING": (1.8, -1.2, 2.4), "INITIALIZING": (1.8, -1.2, 2.4),
+            "PROCESSING": (2.2, -1.6, 2.8), "THINKING": (0.18, -0.12, 0.28),
+            "LISTENING": (0.8, -0.55, 1.15), "SPEAKING": (1.3, -0.9, 2.0),
+            "SLEEPING": (0.08, -0.05, 0.10), "STANDBY": (0.08, -0.05, 0.10),
+            "OFFLINE": (0.08, -0.05, 0.10), "MUTED": (0.0, 0.0, 0.0),
+        }.get(state, (0.45, -0.3, 0.7))
         for i, spd in enumerate(speeds):
             self._rings[i] = (self._rings[i] + spd * boost) % 360
 
-        self._scan  = (self._scan  + (3.0 if self.speaking else 1.3) * boost) % 360
-        self._scan2 = (self._scan2 + (-2.0 if self.speaking else -0.75) * boost) % 360
+        scan_speed = {"INITIALISING": 2.6, "INITIALIZING": 2.6, "PROCESSING": 4.2,
+                      "THINKING": 0.45, "LISTENING": 2.0, "SPEAKING": 3.0,
+                      "SLEEPING": 0.16, "STANDBY": 0.16, "OFFLINE": 0.16,
+                      "MUTED": 0.0}.get(state, 0.8)
+        self._scan  = (self._scan  + scan_speed * boost) % 360
+        reverse_scan = {"INITIALISING": -1.8, "INITIALIZING": -1.8, "PROCESSING": -3.1,
+                        "THINKING": -0.3, "LISTENING": -1.25, "SPEAKING": -2.0,
+                        "SLEEPING": -0.08, "STANDBY": -0.08, "OFFLINE": -0.08,
+                        "MUTED": 0.0}.get(state, -0.5)
+        self._scan2 = (self._scan2 + reverse_scan * boost) % 360
 
         fw  = min(self.width(), self.height())
         lim = fw * 0.48
-        spd = 4.2 if self.speaking else 2.0
+        spd = {"INITIALISING": 3.0, "INITIALIZING": 3.0, "PROCESSING": 5.0,
+               "THINKING": 0.9, "LISTENING": 2.6, "SPEAKING": 4.2,
+               "SLEEPING": 0.45, "STANDBY": 0.45, "OFFLINE": 0.45,
+               "MUTED": 0.0}.get(state, 1.5)
         self._pulses = [r + spd for r in self._pulses if r + spd < lim]
-        if len(self._pulses) < 3 and random.random() < (0.07 if self.speaking else 0.025):
+        pulse_chance = {"INITIALISING": 0.08, "INITIALIZING": 0.08, "PROCESSING": 0.09,
+                        "THINKING": 0.012, "LISTENING": 0.045, "SPEAKING": 0.07,
+                        "SLEEPING": 0.004, "STANDBY": 0.004, "OFFLINE": 0.004,
+                        "MUTED": 0.0}.get(state, 0.02)
+        if len(self._pulses) < 3 and random.random() < pulse_chance:
             self._pulses.append(0.0)
 
         if self.speaking and random.random() < 0.28:
@@ -807,13 +870,22 @@ class HudCanvas(QWidget):
 
         # Keep the reactor compact so the HUD has breathing room around it.
         r_face = fw * 0.17
+        state = ("MUTED" if self.muted else
+                 "SPEAKING" if self.speaking else (self.state or "").upper())
+        state_color = {
+            "INITIALISING": C.PRI, "INITIALIZING": C.PRI,
+            "PROCESSING": C.ACC, "THINKING": C.ACC2,
+            "LISTENING": C.GREEN, "SPEAKING": C.ACC,
+            "MUTED": C.MUTED_C, "SLEEPING": C.TEXT_DIM,
+            "STANDBY": C.TEXT_DIM, "OFFLINE": C.TEXT_DIM,
+        }.get(state, C.PRI)
 
         # halo glow
         for i in range(10):
             r   = r_face * (1.8 - i * 0.08)
             frc = 1.0 - i / 10
             a   = max(0, min(255, int(self._halo * 0.085 * frc)))
-            glow_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
+            glow_col = state_color
             col = qcol(glow_col, a)
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
@@ -821,7 +893,7 @@ class HudCanvas(QWidget):
         # pulse rings
         for pr in self._pulses:
             a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
-            ring_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
+            ring_col = state_color
             col = qcol(ring_col, a)
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
@@ -831,7 +903,7 @@ class HudCanvas(QWidget):
         ring_specs = ((3, 0.0), (2, 0.0), (1, 0.0))
         for idx, (width, _) in enumerate(ring_specs):
             a_val = max(0, min(255, int(self._halo * (1.0 - idx * 0.18))))
-            ring_col = C.MUTED_C if self.muted else (C.ACC if idx == 0 and self.speaking else C.PRI)
+            ring_col = state_color if idx == 0 or state in ("THINKING", "PROCESSING") else C.PRI
             p.setPen(QPen(qcol(ring_col, a_val), width))
             p.save()
             p.translate(cx, cy)
@@ -843,8 +915,8 @@ class HudCanvas(QWidget):
         # scanners
         sr = fw * 0.24
         sa = min(255, int(self._halo * 1.5))
-        ex = 75 if self.speaking else 44
-        scan_col = C.MUTED_C if self.muted else C.PRI
+        ex = 75 if state == "SPEAKING" else (105 if state == "PROCESSING" else 34)
+        scan_col = state_color
         p.setPen(QPen(qcol(scan_col, sa), 2.5))
         p.setBrush(Qt.BrushStyle.NoBrush)
         srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
@@ -852,12 +924,61 @@ class HudCanvas(QWidget):
         p.setPen(QPen(qcol(C.ACC, sa // 2), 1.5))
         p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
 
+        # Give each state a different signature: a rotating boot dial, an
+        # orbiting thought, a focused work sweep, a live voice meter, or radar.
+        if state in ("INITIALISING", "INITIALIZING"):
+            orbit_r = fw * 0.285
+            for i in range(12):
+                angle = math.radians(self._anim_time * 95 + i * 30)
+                x = cx + math.cos(angle) * orbit_r
+                y = cy + math.sin(angle) * orbit_r
+                alpha = 70 + int(170 * ((i + int(self._anim_time * 8)) % 12) / 11)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(qcol(C.PRI, alpha)))
+                p.drawEllipse(QPointF(x, y), 2.0 + (i % 3) * 0.5, 2.0 + (i % 3) * 0.5)
+        elif state == "PROCESSING":
+            loader_r = fw * 0.29
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(qcol(C.ACC, 42), 3))
+            p.drawEllipse(QRectF(cx-loader_r, cy-loader_r, loader_r*2, loader_r*2))
+            p.setPen(QPen(qcol(C.ACC, 230), 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(QRectF(cx-loader_r, cy-loader_r, loader_r*2, loader_r*2),
+                      int((-self._anim_time * 150) * 16), 92 * 16)
+        elif state == "THINKING":
+            orbit_r = fw * 0.255
+            for i, color in enumerate((C.ACC2, C.PRI, C.ACC2)):
+                angle = self._anim_time * 30 + i * (2 * math.pi / 3)
+                point = QPointF(cx + math.cos(angle) * orbit_r,
+                                cy + math.sin(angle) * orbit_r)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(qcol(color, 210)))
+                p.drawEllipse(point, 3.2, 3.2)
+        elif state == "LISTENING":
+            angle = math.radians(self._anim_time * 95 - 90)
+            outer = fw * 0.30
+            p.setPen(QPen(qcol(C.GREEN, 180), 1.6))
+            p.drawLine(QPointF(cx, cy), QPointF(cx + math.cos(angle)*outer,
+                                                cy + math.sin(angle)*outer))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(qcol(C.GREEN, 100), 1))
+            p.drawEllipse(QRectF(cx-outer, cy-outer, outer*2, outer*2))
+        elif state == "SPEAKING":
+            # A small equalizer follows the live audio level below the reactor.
+            bar_y = cy + fw * 0.215
+            for i in range(9):
+                wave = 0.25 + 0.75 * abs(math.sin(self._anim_time * 8 + i * 0.72))
+                height = 3 + (self._amp_disp * 25 + 5) * wave
+                x = cx + (i - 4) * 8
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(qcol(C.ACC, 110 + int(wave * 130))))
+                p.drawRoundedRect(QRectF(x-1.5, bar_y-height/2, 3, height), 1.5, 1.5)
+
         # tick marks — cached vector geometry.
-        p.setPen(QPen(qcol(C.ACC2 if self.speaking else C.PRI, 140), 1))
+        p.setPen(QPen(qcol(state_color, 170), 1))
         p.drawPath(self._tick_path)
 
         # crosshair — cached vector geometry.
-        p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 0.5))), 1))
+        p.setPen(QPen(qcol(state_color, min(255, int(self._halo * 0.5))), 1))
         p.drawPath(self._crosshair_path)
 
         # face
@@ -879,7 +1000,7 @@ class HudCanvas(QWidget):
         else:
             # Keep the identity core outlined rather than a filled blue orb.
             core_r = int(fw * 0.06 * self._scale)
-            core_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
+            core_col = state_color
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(qcol(core_col, min(255, int(self._halo * 2))), 2))
             p.drawEllipse(QRectF(cx - core_r, cy - core_r, core_r * 2, core_r * 2))
@@ -897,22 +1018,22 @@ class HudCanvas(QWidget):
 
         # status text
         sy = cy + fw * 0.25
-        if self.muted:
-            txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
-        elif self.speaking:
+        if state == "MUTED":
+            txt, col = "⊘  MUTED", qcol(C.MUTED_C)
+        elif state == "SPEAKING":
             txt, col = "●  SPEAKING",  qcol(C.ACC)
-        elif self.state == "THINKING":
-            sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
-        elif self.state == "PROCESSING":
-            sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
-        elif self.state == "LISTENING":
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+        elif state == "THINKING":
+            txt, col = f"◉  THINKING{'.' * (int(self._anim_time * 1.5) % 4)}", qcol(C.ACC2)
+        elif state == "PROCESSING":
+            txt, col = f"⟳  PROCESSING{'.' * (int(self._anim_time * 3) % 4)}", qcol(C.ACC)
+        elif state == "LISTENING":
+            txt, col = f"◖  LISTENING  ◗", qcol(C.GREEN)
+        elif state in ("SLEEPING", "STANDBY", "OFFLINE"):
+            txt, col = f"☾  {state}", qcol(C.TEXT_DIM)
+        elif state in ("INITIALISING", "INITIALIZING"):
+            txt, col = f"✦  INITIALISING{'.' * (int(self._anim_time * 2) % 4)}", qcol(C.PRI)
         else:
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  {self.state}", qcol(C.PRI)
+            txt, col = f"●  {state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
         p.setFont(self._hud_font_status)
@@ -5043,6 +5164,141 @@ class JarvisSettingsHub(_HudOverlay):
         super().keyPressEvent(e)
 
 
+class LocationGlobe(QWidget):
+    """In-app satellite globe with search, location permission, and flight animation."""
+    close_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pending: str | None = None
+        self._loaded = False
+        self._started = False
+        self.setStyleSheet(f"background: {C.BG};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(7, 6, 7, 7)
+        layout.setSpacing(5)
+
+        bar = QHBoxLayout()
+        title = QLabel("◉  GLOBAL SATELLITE NAVIGATION")
+        title.setFont(QFont(UI_FONT, 9, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.PRI}; background: transparent; letter-spacing: 1px;")
+        bar.addWidget(title)
+        bar.addStretch(1)
+        self._place = QLineEdit()
+        self._place.setPlaceholderText("Search any city, address, or landmark…")
+        self._place.setMinimumWidth(220)
+        self._place.returnPressed.connect(self._search)
+        self._place.setStyleSheet(
+            f"QLineEdit {{ color: {C.WHITE}; background: {C.PANEL}; border: 1px solid {C.BORDER_B}; "
+            "border-radius: 3px; padding: 5px 8px; }"
+        )
+        bar.addWidget(self._place)
+        self._add_button(bar, "FLY TO", self._search)
+        self._add_button(bar, "MY LOCATION", self._locate)
+        self._add_button(bar, "CLOSE  ✕", lambda: self.close_requested.emit())
+        layout.addLayout(bar)
+
+        self.view = QWebEngineView(self)
+        self.page = self.view.page()
+        self.view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        self.view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptEnabled, True
+        )
+        if hasattr(self.page, "permissionRequested"):
+            self.page.permissionRequested.connect(self._permission_requested)
+        elif hasattr(self.page, "featurePermissionRequested"):
+            self.page.featurePermissionRequested.connect(self._legacy_permission_requested)
+        self.view.loadFinished.connect(self._page_loaded)
+        layout.addWidget(self.view, 1)
+
+    def _add_button(self, bar, label: str, callback):
+        button = QPushButton(label)
+        button.setFont(QFont(UI_FONT, 7, QFont.Weight.Bold))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(f"""
+            QPushButton {{ color: {C.PRI}; background: {C.PANEL};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px; padding: 5px 8px; }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; }}
+        """)
+        button.clicked.connect(callback)
+        bar.addWidget(button)
+
+    def navigate(self, place: str = ""):
+        self._pending = str(place or "").strip()
+        if not self._started:
+            self._started = True
+            map_path = Path(__file__).resolve().parent / "core" / "location_globe.html"
+            self.view.load(QUrl.fromLocalFile(str(map_path)))
+        if self._loaded:
+            self._run_pending()
+
+    def _page_loaded(self, ok: bool):
+        self._loaded = bool(ok)
+        if ok:
+            QTimer.singleShot(500, self._run_pending)
+
+    def _run_pending(self):
+        if not self._loaded or self._pending is None:
+            return
+        place, self._pending = self._pending, None
+        if place:
+            import json as _json
+            self.view.page().runJavaScript(f"window.jarvisFlyTo({_json.dumps(place)});")
+        else:
+            self.view.page().runJavaScript("window.jarvisLocate();")
+
+    def _search(self):
+        value = self._place.text().strip()
+        if value:
+            self._pending = value
+            self._run_pending()
+
+    def _locate(self):
+        self._pending = ""
+        self._run_pending()
+
+    def _permission_requested(self, permission):
+        from PyQt6.QtWebEngineCore import QWebEnginePermission
+        if permission.permissionType() != QWebEnginePermission.PermissionType.Geolocation:
+            permission.deny()
+            return
+        from PyQt6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "ALLOW DEVICE LOCATION?",
+            "JARVIS will use this PC's location service to mark your position. "
+            "Map imagery requests reveal the viewed map area to the map provider. "
+            "The location is not saved by Jarvis. Allow location access?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            permission.grant()
+        else:
+            permission.deny()
+
+    def _legacy_permission_requested(self, origin, feature):
+        if feature != QWebEnginePage.Feature.Geolocation:
+            self.page.setFeaturePermission(
+                origin, feature, QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
+            )
+            return
+        from PyQt6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "ALLOW DEVICE LOCATION?",
+            "JARVIS will use this PC's location service to mark your position. "
+            "Map imagery requests reveal the viewed map area to the map provider. "
+            "The location is not saved by Jarvis. Allow location access?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+                  if answer == QMessageBox.StandardButton.Yes
+                  else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
+        self.page.setFeaturePermission(origin, feature, policy)
+
+
 class MainWindow(QMainWindow):
     # Voice-lock backend helper belongs to MainWindow because startup Voice Unlock
     # runs here. JarvisSettingsHub has its own helper for Settings UI.
@@ -5059,6 +5315,7 @@ class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
+    _location_sig   = pyqtSignal(str)        # place name; empty means current location
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
@@ -5179,6 +5436,9 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack = QStackedWidget()
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
+        self._location_globe = LocationGlobe(self)
+        self._location_globe.close_requested.connect(lambda: self._hud_cam_stack.setCurrentIndex(0))
+        self._hud_cam_stack.addWidget(self._location_globe)
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -5253,6 +5513,7 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
         self._content_sig.connect(self._show_content)
+        self._location_sig.connect(self._show_location)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
         self._confirm_sig.connect(self._show_confirm_banner)
@@ -6600,6 +6861,14 @@ class MainWindow(QMainWindow):
         self._content_panel.raise_()
         self._content_btn.setToolTip("Show new assistant results")
 
+    def _show_location(self, place: str):
+        self._hud_cam_stack.setCurrentIndex(2)
+        self._location_globe.navigate(place)
+
+    def show_location(self, place: str = ""):
+        """Thread-safe request to display current location or fly to a place."""
+        self._location_sig.emit(str(place or "")[:240])
+
     def _on_file_selected(self, path: str):
         self._current_file = path
         p    = Path(path)
@@ -7190,13 +7459,13 @@ class MainWindow(QMainWindow):
 
         self._startup_voice_busy = False
         self._startup_voice_challenge_id = None
-        question_lbl = QLabel("❓ Press VOICE UNLOCK to receive your challenge question.")
+        question_lbl = QLabel("No matching face detected. Enter your Master PIN to continue.")
         question_lbl.setWordWrap(True)
         question_lbl.setStyleSheet(f"color: {C.TEXT}; background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 6px; padding: 10px;")
         layout.addWidget(question_lbl)
         self._startup_question_lbl = question_lbl
 
-        status_lbl = QLabel("Face recognition failed — use Master PIN or voice unlock.")
+        status_lbl = QLabel("Face not recognized — enter your Master PIN.")
         status_lbl.setWordWrap(True)
         status_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         layout.addWidget(status_lbl)
@@ -7204,6 +7473,9 @@ class MainWindow(QMainWindow):
         mic_btn = QPushButton("🎙️  VOICE UNLOCK")
         mic_btn.setToolTip("Answer the displayed local voice challenge")
         mic_btn.clicked.connect(self._start_startup_voice_unlock)
+        # Startup access is limited to an enrolled face or the Master PIN.
+        mic_btn.hide()
+        question_lbl.hide()
         layout.addWidget(mic_btn)
 
         def accept_pin():
@@ -7430,6 +7702,10 @@ class JarvisUI:
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
+
+    def show_location(self, place: str = ""):
+        """Thread-safe: open the in-app globe and locate or navigate."""
+        self._win.show_location(place)
 
     def prompt_reconfig(self):
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""

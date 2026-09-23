@@ -610,7 +610,7 @@ def dev_agent(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "dev_agent",
-    "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+    "description": "Builds complete multi-file projects and websites from scratch: plans, writes project files, installs dependencies, opens VSCode, runs the project, detects runtime/build errors, and attempts fixes.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

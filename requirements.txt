@@ -11,6 +11,7 @@
 # software with QPainter and posed with numpy, so the face costs no extra
 # package, no OpenGL and no GPU. Nothing below was added for it.
 PyQt6>=6.6,<7
+PyQt6-WebEngine>=6.6,<7
 sounddevice>=0.4,<1
 numpy>=1.24,<3
 google-genai>=2.8.0,<3
@@ -28,6 +29,7 @@ pygetwindow
 # ── Vision & media ────────────────────────────────────────────────────────────
 pillow>=10,<13
 opencv-python>=4.8,<5
+mediapipe>=0.10.20
 mss>=9,<11
 
 # ── System, files & documents ─────────────────────────────────────────────────
@@ -80,7 +82,6 @@ pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
 #   pip install pandas       # file_processor: spreadsheet/CSV analysis
 #   pip install pydub        # file_processor: audio metadata and conversion
 #                            #   (also needs ffmpeg on PATH for most formats)
-#   pip install mediapipe    # pushup_counter: elbow-angle rep detection
 
 # ── Optional: local wake word ("Hey Jarvis") ──────────────────────────────────
 # Deliberately NOT installed by default — it's opt-in. Enable it (and download

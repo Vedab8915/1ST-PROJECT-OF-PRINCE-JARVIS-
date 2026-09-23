@@ -628,6 +628,14 @@ class JarvisLive:
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
+        try:
+            from plugins.hand_gestures import configure_runtime
+            configure_runtime(
+                interrupt=self.interrupt,
+                notifier=lambda message: self.ui.write_log(f"SYS: {message}"),
+            )
+        except Exception as exc:
+            print(f"[Plugins] Hand gesture runtime callbacks unavailable: {exc}")
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
@@ -2300,62 +2308,49 @@ def main():
     def runner():
         ui.wait_for_api_key()
 
-        # --- Security Interceptor ---
+        # --- Mandatory startup authentication ---
         face_name = None
-        from memory.config_manager import get_plugin_enabled, get_plugin_config
-        # Face authentication is an optional plugin.  A partial download used to
-        # enable it by default, then crash the worker thread before JARVIS could
-        # start because there was no ``plugins`` package to import.
-        face_plugin = BASE_DIR / "plugins" / "face_auth.py"
-        if get_plugin_enabled("face_authenticate") and not face_plugin.is_file():
-            from memory.config_manager import save_plugin_enabled
-            save_plugin_enabled("face_authenticate", False)
-            print("[SECURITY] Face authentication disabled: plugins/face_auth.py is not installed.")
-            ui.write_log("SYS: Face authentication is unavailable (plugin not installed); disabled.")
-        elif get_plugin_enabled("face_authenticate"):
+        import time
+        from memory.config_manager import get_plugin_config
+        res = {"success": False, "message": "Face authentication is disabled."}
+        manager = None
+        try:
+            from plugins.face_auth import get_face_auth_manager
+            manager = get_face_auth_manager()
             cfg = get_plugin_config("face_authenticate")
-            if cfg.get("startup_required", True):
-                from plugins.face_auth import get_face_auth_manager
-                manager = get_face_auth_manager()
-                print("[SECURITY] Running face authentication...")
-                ui.set_state("PROCESSING")
-                
-                import time
-                res = {"success": False, "message": "Failed to verify face."}
-                max_attempts = 12  # ~6 seconds total
-                for attempt in range(max_attempts):
-                    res = manager.verify_once(threshold=float(cfg.get("similarity_threshold", 0.45)))
-                    reason = res.get("reason", "")
-                    print(f"[SECURITY]   attempt {attempt+1}/{max_attempts}: success={res.get('success')} reason={reason} sim={res.get('similarity','N/A')}")
-                    if res.get("success"):
-                        break
-                    # Keep retrying for camera warmup issues and transient failures
-                    if reason in ("NO_FACE", "NO_FRAME", "UNKNOWN_FACE"):
-                        time.sleep(0.5)
-                        continue
-                    # No enrolled faces or some other hard failure
+            threshold = max(0.78, float(cfg.get("similarity_threshold", 0.78)))
+            ui.set_state("PROCESSING")
+            for attempt in range(12):
+                res = manager.verify_once(threshold=threshold)
+                print(f"[SECURITY] Face check {attempt + 1}/12: {res.get('reason')}")
+                if res.get("success") or res.get("reason") not in (
+                    "NO_FACE", "NO_FRAME", "UNKNOWN_FACE"
+                ):
                     break
-                    
-                # Ensure camera is turned off after auth attempts
-                try:
-                    manager.recognizer.close_camera()
-                except Exception as e:
-                    print(f"[SECURITY] Failed to release face camera: {e}")
-                    
-                if res.get("success"):
-                    face_name = res.get('face_name')
-                    print(f"[SECURITY] Face recognized: {face_name}")
-                    from memory.config_manager import get_assistant_name, save_assistant_config
-                    save_assistant_config(get_assistant_name() or "JARVIS", face_name)
-                else:
-                    print(f"[SECURITY] Face recognition failed: {res.get('message')}. Falling back to PIN.")
-                    pin_res = ui.request_startup_pin()
-                    if pin_res is None:
-                        print("[SECURITY] Unlock cancelled. Shutting down...")
-                        import os
-                        os._exit(0)
-                    else:
-                        print(f"[SECURITY] Unlocked via {pin_res.get('method')}")
+                time.sleep(0.5)
+        except Exception as exc:
+            res = {"success": False, "message": f"Face authentication unavailable: {exc}"}
+        finally:
+            if manager is not None:
+                manager.recognizer.close_camera()
+
+        if res.get("success"):
+            face_name = res.get("face_name")
+            print(f"[SECURITY] Authorized face recognized: {face_name}")
+        else:
+            print(f"[SECURITY] {res.get('message', 'Face not recognized')} — asking for Master PIN.")
+            pin_res = ui.request_startup_pin()
+            if pin_res is None:
+                print("[SECURITY] Unlock cancelled. Shutting down...")
+                import os
+                os._exit(0)
+            print("[SECURITY] Unlocked with Master PIN.")
+
+        if face_name:
+            from memory.config_manager import get_assistant_name, save_assistant_config
+            save_assistant_config(get_assistant_name() or "JARVIS", face_name)
+        # Authentication's camera is never carried into the unlocked session.
+        ui.stop_camera_stream()
         # ----------------------------
 
         jarvis = JarvisLive(ui)

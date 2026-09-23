@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    html, body, #map { width: 100%; height: 100%; margin: 0; background: #00060a; overflow: hidden; }
+    .maplibregl-ctrl-group { background: #06151d !important; border: 1px solid #00a9c9 !important; }
+    .maplibregl-ctrl button { filter: invert(.8) sepia(1) saturate(4) hue-rotate(145deg); }
+    .maplibregl-ctrl-attrib { background: rgba(0,8,12,.85) !important; color: #d8f8ff !important; }
+    .maplibregl-ctrl-attrib a { color: #6feaff !important; }
+    #status { position: absolute; z-index: 3; bottom: 30px; left: 12px; max-width: 75%;
+      padding: 7px 10px; color: #8ffcff; background: #001018dd; border: 1px solid #0d6077;
+      border-radius: 4px; font: 12px 'Bahnschrift', sans-serif; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="map"></div><div id="status">SATELLITE GLOBE · Ready</div>
+  <script src="https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js"
+    onerror="document.getElementById('status').textContent='MAP RENDERER UNAVAILABLE · Check internet access'"></script>
+  <script>
+    const status = document.getElementById('status');
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        projection: {type: 'globe'},
+        sources: {
+          imagery: {
+            type: 'raster',
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+            tileSize: 256,
+            attribution: 'Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+          }
+        },
+        layers: [{id: 'satellite', type: 'raster', source: 'imagery'}],
+        sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] }
+      },
+      center: [20, 20], zoom: 1.6, pitch: 0, attributionControl: true
+    });
+    map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), 'top-right');
+    map.on('load', () => { map.setFog({}); status.textContent = 'SATELLITE GLOBE · Search a place or locate this device'; });
+    map.on('error', (e) => { if (e && e.error) status.textContent = 'Map imagery connection issue · Check internet access'; });
+    let marker = null;
+    function flyTo(lon, lat, label) {
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+      status.textContent = 'FLIGHT PATH · ' + label;
+      map.flyTo({center: [lon, lat], zoom: 15, pitch: 48, curve: 1.5, speed: 0.72, essential: true});
+      if (marker) marker.remove();
+      marker = new maplibregl.Marker({color: '#00d4ff'}).setLngLat([lon, lat]).setPopup(
+        new maplibregl.Popup({offset: 24}).setText(label)
+      ).addTo(map);
+      map.once('moveend', () => { status.textContent = label.toUpperCase() + ' · SATELLITE VIEW'; marker.togglePopup(); });
+    }
+    window.jarvisFlyTo = async (place) => {
+      const query = String(place || '').trim();
+      if (!query) return window.jarvisLocate();
+      status.textContent = 'SEARCHING · ' + query;
+      try {
+        const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(query);
+        const response = await fetch(url, {headers: {'Accept': 'application/json'}});
+        if (!response.ok) throw new Error('geocoder unavailable');
+        const results = await response.json();
+        if (!results.length) { status.textContent = 'PLACE NOT FOUND · ' + query; return; }
+        flyTo(Number(results[0].lon), Number(results[0].lat), results[0].display_name.split(',').slice(0, 3).join(','));
+      } catch (_) { status.textContent = 'PLACE SEARCH FAILED · Check internet access'; }
+    };
+    window.jarvisLocate = () => {
+      if (!navigator.geolocation) { status.textContent = 'LOCATION UNAVAILABLE · Device location service not supported'; return; }
+      status.textContent = 'REQUESTING DEVICE LOCATION · Allow the permission prompt';
+      navigator.geolocation.getCurrentPosition(
+        pos => flyTo(pos.coords.longitude, pos.coords.latitude,
+          'YOUR LOCATION · ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4)),
+        err => { status.textContent = err.code === 1 ? 'LOCATION DENIED · Allow location access to continue' : 'LOCATION UNAVAILABLE · Enable Windows location services'; },
+        {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000}
+      );
+    };
+  </script>
+</body>
+</html>

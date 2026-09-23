@@ -6,6 +6,9 @@
 
 # ── Secrets. Committing any of these publishes them. ──────────────────────────
 config/api_keys.json
+config/master_pin.json
+config/authorized_faces.json
+config/hand_landmarker.task
 config/certs/
 config/whatsapp_web/          # a LINKED WhatsApp session — committing it hands
                               # somebody your WhatsApp account, not just a key
@@ -18,6 +21,7 @@ config/whatsapp_web/          # a LINKED WhatsApp session — committing it hand
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
 memory/*.db
+memory/feedback.jsonl
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/

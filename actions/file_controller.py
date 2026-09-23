@@ -724,7 +724,7 @@ def file_controller(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "file_controller",
-    "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+    "description": "Manages PC files and folders. Use to create files/folders, write content, list, read, find, move, copy, rename, delete, inspect file details, or check disk usage.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
