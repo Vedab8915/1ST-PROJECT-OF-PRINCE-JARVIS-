@@ -565,8 +565,6 @@ class HudCanvas(QWidget):
         self.grid_brightness = 0.42
 
         self._tick       = 0
-        self._anim_time  = 0.0
-        self._anim_state = "INITIALISING"
         self._scale      = 1.0
         self._tgt_scale  = 1.0
         self._halo       = 55.0
@@ -709,17 +707,6 @@ class HudCanvas(QWidget):
     def _step(self):
         self._tick += 1
         now = time.time()
-        state = ("MUTED" if self.muted else
-                 "SPEAKING" if self.speaking else (self.state or "").upper())
-        if state != self._anim_state:
-            self._anim_state = state
-        thinking = state == "THINKING"
-        processing = state == "PROCESSING"
-        listening = state == "LISTENING"
-        initializing = state in ("INITIALISING", "INITIALIZING")
-        sleeping = state in ("SLEEPING", "STANDBY", "OFFLINE")
-        active = thinking or processing or listening or initializing
-        self._anim_time += 1.0 / 60.0
 
         # ── Live audio reactivity ────────────────────────────────────────────
         # Audio threads push peaks into _live_amp; decay it toward silence so
@@ -729,25 +716,10 @@ class HudCanvas(QWidget):
         amp = self._amp_disp
 
         # Slow "breathing" base target (random shimmer), refreshed on a timer.
-        if now - self._last_t > (0.12 if state == "SPEAKING" else (0.18 if active else 0.5)):
+        if now - self._last_t > (0.12 if self.speaking else 0.5):
             if self.speaking:
                 self._base_scale = 1.03
                 self._base_halo  = 122.0
-            elif processing:
-                self._base_scale = 1.008
-                self._base_halo  = 82.0
-            elif thinking:
-                self._base_scale = 1.0
-                self._base_halo  = 64.0
-            elif listening:
-                self._base_scale = 1.006
-                self._base_halo  = 72.0
-            elif initializing:
-                self._base_scale = 1.0
-                self._base_halo  = 58.0
-            elif sleeping:
-                self._base_scale = 0.985
-                self._base_halo  = 20.0
             elif self.muted:
                 self._base_scale = random.uniform(0.998, 1.002)
                 self._base_halo  = random.uniform(15, 28)
@@ -758,66 +730,33 @@ class HudCanvas(QWidget):
 
         # Every frame, the live audio level lifts the target on top of the base
         # — this is what makes the core visibly pulse to the actual voice.
-        if state == "MUTED":
+        if self.muted:
             self._tgt_scale, self._tgt_halo = self._base_scale, self._base_halo
-        elif state == "SPEAKING":
+        elif self.speaking:
             self._tgt_scale = self._base_scale + amp * 0.13
             self._tgt_halo  = self._base_halo  + amp * 95.0
-        elif active:
-            # Each mode has its own pulse rhythm: calm thought, quick work,
-            # steady listening, and a short startup swell.
-            rate = 1.0 if thinking else (3.2 if processing else (1.8 if listening else 2.5))
-            depth = 0.010 if thinking else (0.022 if processing else (0.008 if listening else 0.035))
-            phase = self._anim_time * rate
-            self._tgt_scale = self._base_scale + math.sin(phase) * depth
-            glow = 10.0 if thinking else (24.0 if processing else (18.0 if listening else 30.0))
-            self._tgt_halo = self._base_halo + glow * (0.5 + 0.5 * math.sin(phase))
-        elif sleeping:
-            self._tgt_scale = self._base_scale + math.sin(self._anim_time * 0.45) * 0.004
-            self._tgt_halo = self._base_halo + 4.0 * (0.5 + 0.5 * math.sin(self._anim_time * 0.45))
         else:
             self._tgt_scale = self._base_scale + amp * 0.06
             self._tgt_halo  = self._base_halo  + amp * 75.0
 
-        sp = 0.38 if state == "SPEAKING" else (0.28 if active else (0.12 if sleeping or state == "MUTED" else 0.18))
+        sp = 0.38 if self.speaking else (0.30 if amp > 0.02 else 0.15)
         self._scale += (self._tgt_scale - self._scale) * sp
         self._halo  += (self._tgt_halo  - self._halo)  * sp
 
         # Rings/scanners spin faster while speaking, reacting to loudness.
         boost  = 1.0 + amp * 1.6
-        speeds = {
-            "INITIALISING": (1.8, -1.2, 2.4), "INITIALIZING": (1.8, -1.2, 2.4),
-            "PROCESSING": (2.2, -1.6, 2.8), "THINKING": (0.18, -0.12, 0.28),
-            "LISTENING": (0.8, -0.55, 1.15), "SPEAKING": (1.3, -0.9, 2.0),
-            "SLEEPING": (0.08, -0.05, 0.10), "STANDBY": (0.08, -0.05, 0.10),
-            "OFFLINE": (0.08, -0.05, 0.10), "MUTED": (0.0, 0.0, 0.0),
-        }.get(state, (0.45, -0.3, 0.7))
+        speeds = ([1.3, -0.9, 2.0] if self.speaking else [0.55, -0.35, 0.9])
         for i, spd in enumerate(speeds):
             self._rings[i] = (self._rings[i] + spd * boost) % 360
 
-        scan_speed = {"INITIALISING": 2.6, "INITIALIZING": 2.6, "PROCESSING": 4.2,
-                      "THINKING": 0.45, "LISTENING": 2.0, "SPEAKING": 3.0,
-                      "SLEEPING": 0.16, "STANDBY": 0.16, "OFFLINE": 0.16,
-                      "MUTED": 0.0}.get(state, 0.8)
-        self._scan  = (self._scan  + scan_speed * boost) % 360
-        reverse_scan = {"INITIALISING": -1.8, "INITIALIZING": -1.8, "PROCESSING": -3.1,
-                        "THINKING": -0.3, "LISTENING": -1.25, "SPEAKING": -2.0,
-                        "SLEEPING": -0.08, "STANDBY": -0.08, "OFFLINE": -0.08,
-                        "MUTED": 0.0}.get(state, -0.5)
-        self._scan2 = (self._scan2 + reverse_scan * boost) % 360
+        self._scan  = (self._scan  + (3.0 if self.speaking else 1.3) * boost) % 360
+        self._scan2 = (self._scan2 + (-2.0 if self.speaking else -0.75) * boost) % 360
 
         fw  = min(self.width(), self.height())
         lim = fw * 0.48
-        spd = {"INITIALISING": 3.0, "INITIALIZING": 3.0, "PROCESSING": 5.0,
-               "THINKING": 0.9, "LISTENING": 2.6, "SPEAKING": 4.2,
-               "SLEEPING": 0.45, "STANDBY": 0.45, "OFFLINE": 0.45,
-               "MUTED": 0.0}.get(state, 1.5)
+        spd = 4.2 if self.speaking else 2.0
         self._pulses = [r + spd for r in self._pulses if r + spd < lim]
-        pulse_chance = {"INITIALISING": 0.08, "INITIALIZING": 0.08, "PROCESSING": 0.09,
-                        "THINKING": 0.012, "LISTENING": 0.045, "SPEAKING": 0.07,
-                        "SLEEPING": 0.004, "STANDBY": 0.004, "OFFLINE": 0.004,
-                        "MUTED": 0.0}.get(state, 0.02)
-        if len(self._pulses) < 3 and random.random() < pulse_chance:
+        if len(self._pulses) < 3 and random.random() < (0.07 if self.speaking else 0.025):
             self._pulses.append(0.0)
 
         if self.speaking and random.random() < 0.28:
@@ -872,20 +811,13 @@ class HudCanvas(QWidget):
         r_face = fw * 0.17
         state = ("MUTED" if self.muted else
                  "SPEAKING" if self.speaking else (self.state or "").upper())
-        state_color = {
-            "INITIALISING": C.PRI, "INITIALIZING": C.PRI,
-            "PROCESSING": C.ACC, "THINKING": C.ACC2,
-            "LISTENING": C.GREEN, "SPEAKING": C.ACC,
-            "MUTED": C.MUTED_C, "SLEEPING": C.TEXT_DIM,
-            "STANDBY": C.TEXT_DIM, "OFFLINE": C.TEXT_DIM,
-        }.get(state, C.PRI)
 
         # halo glow
         for i in range(10):
             r   = r_face * (1.8 - i * 0.08)
             frc = 1.0 - i / 10
             a   = max(0, min(255, int(self._halo * 0.085 * frc)))
-            glow_col = state_color
+            glow_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
             col = qcol(glow_col, a)
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
@@ -893,7 +825,7 @@ class HudCanvas(QWidget):
         # pulse rings
         for pr in self._pulses:
             a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
-            ring_col = state_color
+            ring_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
             col = qcol(ring_col, a)
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
@@ -903,7 +835,7 @@ class HudCanvas(QWidget):
         ring_specs = ((3, 0.0), (2, 0.0), (1, 0.0))
         for idx, (width, _) in enumerate(ring_specs):
             a_val = max(0, min(255, int(self._halo * (1.0 - idx * 0.18))))
-            ring_col = state_color if idx == 0 or state in ("THINKING", "PROCESSING") else C.PRI
+            ring_col = C.MUTED_C if self.muted else (C.ACC if idx == 0 and self.speaking else C.PRI)
             p.setPen(QPen(qcol(ring_col, a_val), width))
             p.save()
             p.translate(cx, cy)
@@ -915,8 +847,8 @@ class HudCanvas(QWidget):
         # scanners
         sr = fw * 0.24
         sa = min(255, int(self._halo * 1.5))
-        ex = 75 if state == "SPEAKING" else (105 if state == "PROCESSING" else 34)
-        scan_col = state_color
+        ex = 75 if self.speaking else 44
+        scan_col = C.MUTED_C if self.muted else C.PRI
         p.setPen(QPen(qcol(scan_col, sa), 2.5))
         p.setBrush(Qt.BrushStyle.NoBrush)
         srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
@@ -924,61 +856,12 @@ class HudCanvas(QWidget):
         p.setPen(QPen(qcol(C.ACC, sa // 2), 1.5))
         p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
 
-        # Give each state a different signature: a rotating boot dial, an
-        # orbiting thought, a focused work sweep, a live voice meter, or radar.
-        if state in ("INITIALISING", "INITIALIZING"):
-            orbit_r = fw * 0.285
-            for i in range(12):
-                angle = math.radians(self._anim_time * 95 + i * 30)
-                x = cx + math.cos(angle) * orbit_r
-                y = cy + math.sin(angle) * orbit_r
-                alpha = 70 + int(170 * ((i + int(self._anim_time * 8)) % 12) / 11)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QBrush(qcol(C.PRI, alpha)))
-                p.drawEllipse(QPointF(x, y), 2.0 + (i % 3) * 0.5, 2.0 + (i % 3) * 0.5)
-        elif state == "PROCESSING":
-            loader_r = fw * 0.29
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(qcol(C.ACC, 42), 3))
-            p.drawEllipse(QRectF(cx-loader_r, cy-loader_r, loader_r*2, loader_r*2))
-            p.setPen(QPen(qcol(C.ACC, 230), 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            p.drawArc(QRectF(cx-loader_r, cy-loader_r, loader_r*2, loader_r*2),
-                      int((-self._anim_time * 150) * 16), 92 * 16)
-        elif state == "THINKING":
-            orbit_r = fw * 0.255
-            for i, color in enumerate((C.ACC2, C.PRI, C.ACC2)):
-                angle = self._anim_time * 30 + i * (2 * math.pi / 3)
-                point = QPointF(cx + math.cos(angle) * orbit_r,
-                                cy + math.sin(angle) * orbit_r)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QBrush(qcol(color, 210)))
-                p.drawEllipse(point, 3.2, 3.2)
-        elif state == "LISTENING":
-            angle = math.radians(self._anim_time * 95 - 90)
-            outer = fw * 0.30
-            p.setPen(QPen(qcol(C.GREEN, 180), 1.6))
-            p.drawLine(QPointF(cx, cy), QPointF(cx + math.cos(angle)*outer,
-                                                cy + math.sin(angle)*outer))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(qcol(C.GREEN, 100), 1))
-            p.drawEllipse(QRectF(cx-outer, cy-outer, outer*2, outer*2))
-        elif state == "SPEAKING":
-            # A small equalizer follows the live audio level below the reactor.
-            bar_y = cy + fw * 0.215
-            for i in range(9):
-                wave = 0.25 + 0.75 * abs(math.sin(self._anim_time * 8 + i * 0.72))
-                height = 3 + (self._amp_disp * 25 + 5) * wave
-                x = cx + (i - 4) * 8
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QBrush(qcol(C.ACC, 110 + int(wave * 130))))
-                p.drawRoundedRect(QRectF(x-1.5, bar_y-height/2, 3, height), 1.5, 1.5)
-
         # tick marks — cached vector geometry.
-        p.setPen(QPen(qcol(state_color, 170), 1))
+        p.setPen(QPen(qcol(C.ACC2 if self.speaking else C.PRI, 140), 1))
         p.drawPath(self._tick_path)
 
         # crosshair — cached vector geometry.
-        p.setPen(QPen(qcol(state_color, min(255, int(self._halo * 0.5))), 1))
+        p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 0.5))), 1))
         p.drawPath(self._crosshair_path)
 
         # face
@@ -1000,7 +883,7 @@ class HudCanvas(QWidget):
         else:
             # Keep the identity core outlined rather than a filled blue orb.
             core_r = int(fw * 0.06 * self._scale)
-            core_col = state_color
+            core_col = C.MUTED_C if self.muted else (C.ACC if self.speaking else C.PRI)
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(qcol(core_col, min(255, int(self._halo * 2))), 2))
             p.drawEllipse(QRectF(cx - core_r, cy - core_r, core_r * 2, core_r * 2))
@@ -1018,20 +901,26 @@ class HudCanvas(QWidget):
 
         # status text
         sy = cy + fw * 0.25
+        dots = "." * (self._tick // 12 % 4)
         if state == "MUTED":
-            txt, col = "⊘  MUTED", qcol(C.MUTED_C)
+            led = "●" if self._tick // 24 % 2 else "○"
+            txt, col = f"{led}  MUTED", qcol(C.MUTED_C, 255 if led == "●" else 125)
         elif state == "SPEAKING":
-            txt, col = "●  SPEAKING",  qcol(C.ACC)
+            bars = ("▁▃▅▃", "▃▅▃▁", "▅▃▁▃", "▃▁▃▅")[self._tick // 4 % 4]
+            txt, col = f"{bars}  SPEAKING  {bars}", qcol(C.ACC)
         elif state == "THINKING":
-            txt, col = f"◉  THINKING{'.' * (int(self._anim_time * 1.5) % 4)}", qcol(C.ACC2)
+            txt, col = f"◈  THINKING{dots}", qcol(C.ACC2)
         elif state == "PROCESSING":
-            txt, col = f"⟳  PROCESSING{'.' * (int(self._anim_time * 3) % 4)}", qcol(C.ACC)
+            spinner = ("◴", "◷", "◶", "◵")[self._tick // 5 % 4]
+            txt, col = f"{spinner}  PROCESSING", qcol(C.ACC2)
         elif state == "LISTENING":
-            txt, col = f"◖  LISTENING  ◗", qcol(C.GREEN)
+            txt, col = f"{'●' if self._blink else '○'}  LISTENING", qcol(C.GREEN)
         elif state in ("SLEEPING", "STANDBY", "OFFLINE"):
-            txt, col = f"☾  {state}", qcol(C.TEXT_DIM)
+            icons = {"SLEEPING": "☾", "STANDBY": "◌", "OFFLINE": "○"}
+            txt, col = f"{icons[state]}  {state}{dots}", qcol(C.TEXT_DIM)
         elif state in ("INITIALISING", "INITIALIZING"):
-            txt, col = f"✦  INITIALISING{'.' * (int(self._anim_time * 2) % 4)}", qcol(C.PRI)
+            star = "✦" if self._tick // 8 % 2 else "✧"
+            txt, col = f"{star}  INITIALISING{dots}", qcol(C.PRI)
         else:
             txt, col = f"●  {state}", qcol(C.PRI)
 
