@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -637,6 +638,8 @@ class _BrowserSession:
         url      = _normalize_url(url)
         page     = await self._get_page()
         prev_url = page.url
+        if prev_url.rstrip("/") == url.rstrip("/"):
+            return f"Already open: {prev_url}"
 
         async def _do_goto(p: Page) -> str:
             """Attempt navigation and return the resulting URL (may still be blank)."""
@@ -847,6 +850,22 @@ class _SessionRegistry:
         self._active_browser:  str                        = ""
         self._lock             = threading.Lock()
         self._last_native_url: str                        = ""
+        self._recent_navigation: dict[str, float] = {}
+
+    def duplicate_navigation(self, key: str, seconds: float = 20.0) -> bool:
+        """Prevent model/tool retries from opening the same site or tab twice."""
+        now = time.monotonic()
+        key = key.strip().lower()
+        with self._lock:
+            self._recent_navigation = {
+                old: stamp for old, stamp in self._recent_navigation.items()
+                if now - stamp <= seconds
+            }
+            previous = self._recent_navigation.get(key)
+            if previous is not None and now - previous <= seconds:
+                return True
+            self._recent_navigation[key] = now
+            return False
 
     def has(self, browser_name: str | None = None) -> bool:
         """Is there an active automation session for this browser (or any)?"""
@@ -963,6 +982,16 @@ def browser_control(
     # opens here. The only exception: if an automation flow is already running,
     # navigation continues in that window (so multi-step tasks aren't split).
     if action in ("go_to", "search", "new_tab"):
+        if action == "search":
+            engine = str(params.get("engine", "google")).lower()
+            nav_key = _SEARCH_ENGINES.get(engine, _SEARCH_ENGINES["google"]) + str(params.get("query", "")).strip().lower()
+        else:
+            raw_url = str(params.get("url", "")).strip()
+            nav_key = _normalize_url(raw_url) if raw_url else "about:blank"
+        if _registry.duplicate_navigation(f"{browser or 'default'}:{nav_key}"):
+            result = "That same page was just opened; keeping its existing tab."
+            _log(player, result)
+            return result
         if _registry.has(browser):
             sess = _registry.get(browser)
             try:

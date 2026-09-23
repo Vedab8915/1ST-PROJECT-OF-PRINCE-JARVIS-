@@ -5,6 +5,8 @@ import sys
 import time
 import subprocess
 import platform
+import ctypes
+import os
 from pathlib import Path
 
 try:
@@ -244,9 +246,77 @@ def brightness_down():
         except Exception as e:
             print(f"[Settings] Brightness down failed on Windows: {e}")
 
-def close_app():
+def _close_named_app(target: str) -> str:
+    """Post WM_CLOSE to visible windows of the named process, preserving save prompts."""
+    if _OS != "Windows":
+        return "Closing a named app is currently supported on Windows; no app was closed."
+    target = os.path.basename(str(target).strip()).casefold().removesuffix(".exe")
+    if not target:
+        return "Please name the app to close."
+    aliases = {
+        "google chrome": "chrome", "chrome": "chrome",
+        "microsoft edge": "msedge", "edge": "msedge",
+        "visual studio code": "code", "vscode": "code",
+        "microsoft word": "winword", "word": "winword",
+        "microsoft excel": "excel", "excel": "excel",
+        "microsoft powerpoint": "powerpnt", "powerpoint": "powerpnt",
+        "whatsapp": "whatsapp", "file explorer": "explorer", "explorer": "explorer",
+        "spotify": "spotify", "discord": "discord", "telegram": "telegram",
+        "notepad": "notepad", "calculator": "calculator",
+    }
+    expected = aliases.get(target, target)
+    hosted_title_hints = {
+        "calculator": ("calculator",), "whatsapp": ("whatsapp",),
+        "msteams": ("teams",), "instagram": ("instagram",),
+        "notepad": ("notepad",), "spotify": ("spotify",),
+    }
+    try:
+        import psutil
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        closed = []
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def visit(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            try:
+                proc = psutil.Process(pid.value)
+                proc_name = os.path.splitext(proc.name().casefold())[0]
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                return True
+            title_buf = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, title_buf, len(title_buf))
+            title = title_buf.value.strip()
+            hosted_match = (
+                proc_name == "applicationframehost"
+                and any(hint in title.casefold() for hint in hosted_title_hints.get(expected, ()))
+            )
+            if proc_name != expected and not hosted_match:
+                return True
+            if expected == "explorer" and title.casefold() == "program manager":
+                return True
+            if user32.PostMessageW(hwnd, 0x0010, 0, 0):
+                closed.append(title or proc.name())
+            return True
+
+        callback = callback_type(visit)
+        user32.EnumWindows(callback, 0)
+        if closed:
+            return f"Asked {len(closed)} {target} window(s) to close. Any unsaved-work prompt remains under your control."
+        return f"No open window for {target} was found; no process was force-closed."
+    except Exception as exc:
+        return f"Could not close {target}: {exc}"
+
+
+def close_app(target: str | None = None):
+    if target:
+        return _close_named_app(target)
     if _OS == "Darwin": pyautogui.hotkey("command", "q")
     else:               pyautogui.hotkey("alt", "f4")
+    return "Closed the focused window."
 
 def close_window():
     if _OS == "Darwin": pyautogui.hotkey("command", "w")
@@ -848,6 +918,12 @@ def computer_settings(
         type_text(text, press_enter_after=enter_after)
         return f"Typed: {text[:80]}"
 
+    if action == "close_app":
+        target = str(value or params.get("app_name", "")).strip()
+        if not target:
+            return "Please name the app to close; I will not guess which window you mean."
+        return _close_named_app(target)
+
     if action == "press_key":
         key = str(value or params.get("key", "")).strip()
         if not key:
@@ -911,7 +987,7 @@ def computer_settings(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_settings",
-    "description": "Controls the computer: volume, brightness, window management, keyboard shortcuts, typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. Use for ANY single computer control command. restart, shutdown and toggle_wifi put a confirmation on the user's screen and do NOT happen until they press it — never claim they are done. Volume, brightness and dark mode can be reversed with the `undo` tool.",
+    "description": "Controls PC settings, windows, tabs, zoom, screenshots and keyboard input. For 'close [app]', set action=close_app and value to the exact target name; on Windows it closes only that app's visible windows and preserves save prompts. If the user just says close the current window, use close_window. Restart, shutdown and toggle_wifi require HUD confirmation.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -953,7 +1029,7 @@ TOOL = {
             },
             "value": {
                 "type": "STRING",
-                "description": "Optional value: volume level 0-100, text to type, key name, etc."
+                "description": "For close_app, the exact app name to close (for example Chrome or WhatsApp). Otherwise, optional volume 0-100, text, or key name."
             }
         },
         "required": []

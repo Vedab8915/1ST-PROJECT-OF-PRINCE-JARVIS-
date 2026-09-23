@@ -225,12 +225,11 @@ def format_memory_for_prompt(memory: dict | None) -> str:
         if not val:
             continue
         if field == "language":
-            # Labelled as an observation, not a setting. A bare "Language:
-            # English" line written months ago reads like a standing order and
-            # was one of the reasons a Turkish question came back in English.
+            # This legacy identity value only records a language the user has
+            # spoken; response-language preference lives under preferences.
             core_lines.append(
-                f"Has spoken to you in: {val} (an observation about the past — "
-                f"always answer in the language of their CURRENT message)")
+                f"Has spoken to you in: {val} (historical usage only; not a "
+                f"reply-language instruction)")
         else:
             core_lines.append(f"{field.title()}: {val}")
     for key, entry in identity.items():

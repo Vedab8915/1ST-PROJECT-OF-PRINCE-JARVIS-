@@ -8,14 +8,15 @@ Speak, type, or send a paired phone command. JARVIS sends the conversation to Ge
 
 ## Capabilities
 
-- Real-time voice conversations through Gemini Live.
-- Text commands when voice input is inconvenient.
-- Holographic, audio-reactive JARVIS desktop interface.
-- Desktop, browser, web-search, file, reminder, media, weather, system-monitoring, and developer tools.
-- Local facts and session summaries for continuity between conversations.
-- Optional wake-word and push-to-talk modes.
-- Drop-in extensions from the `plugins/` directory.
-- QR pairing for remote text commands from a phone.
+- Real-time voice conversations and typed commands through Gemini Live.
+- An audio-reactive desktop HUD with avatar, status, activity log, and configurable appearance.
+- Optional wake word, wake/sleep, mute, interrupt, and push-to-talk controls.
+- 21 discoverable built-in actions, eight assistant-integrated tools, and two included plugins.
+- Local personal memory, session summaries, reminders, and background topic monitoring.
+- Computer, browser, file, document, code, presentation, media, weather, flight, and location tools.
+- Optional startup PIN, face authentication, voice-lock settings, and QR-paired phone commands.
+
+Actions and plugins are discovered from their folders at startup. Their availability depends on the operating system, installed packages/apps, permissions, network access, API configuration, and plugin settings. The capabilities below describe what the code provides; they do not guarantee that an external service or device is currently reachable.
 
 ## How the application works
 
@@ -118,22 +119,62 @@ The main window shows JARVIS status, activity, response visuals, and shortcuts t
 
 All settings are local. If your microphone or speaker is changed outside the app, reopen the audio selection page and choose the correct device.
 
-## Things JARVIS can help with
+## Built-in skills
 
-Actual results depend on the operating system, installed applications, browser state, permissions, and enabled extensions. Typical requests include:
+The following actions are registered from `actions/`:
 
-- Open, close, or find applications.
-- Search the web, compare products, research topics, and check weather.
-- Open and control supported browser sessions.
-- Take screenshots, inspect the screen, type text, and perform desktop actions.
-- Read, summarize, and work with supported documents.
-- Create and manage reminders.
-- Monitor CPU, RAM, GPU, and system information.
-- Search or control YouTube.
-- Find flights, assist with code, and help with game updates.
-- Draft or send supported messages after the related service is configured.
+| Skill | What it does |
+| --- | --- |
+| App downloads | Searches Microsoft Store and guides a confirmed, safe install; external downloads are not automatically installed. |
+| Browser control | Opens websites and controls supported browser sessions: navigation, clicks, forms, typing, and screenshots. |
+| Code helper | Writes, explains, edits, runs, and debugs code. |
+| Computer control | Sends clicks, typing, hotkeys, scrolling, cursor movement, and screen inspection to the desktop. |
+| Computer settings | Controls supported windows, tabs, zoom, screenshots, keyboard input, and selected system settings. Some consequential actions require HUD confirmation. |
+| Sketch | Creates an SVG illustration or diagram from a description and opens a preview. |
+| Desktop control | Changes wallpaper and manages or inspects desktop items. |
+| Developer agent | Builds multi-file projects and websites, runs them, and attempts to resolve build/runtime errors. |
+| File controller | Creates, reads, searches, writes, copies, moves, renames, deletes, and inspects files and folders. |
+| File processor | Processes supplied files, including supported images, PDFs, documents, spreadsheets, code, audio, video, and archives. |
+| Flight finder | Searches Google Flights for route options. |
+| Game updater | Lists, installs, updates, or checks supported Steam and Epic games. |
+| Location control | Shows device location or navigates to a named Earth place on the in-app globe; can open the solar-system viewer for planets and moons. |
+| Open app | Opens a requested app or website. YouTube playback uses the dedicated YouTube action. |
+| Reminder | Schedules a timed reminder using the operating system's scheduler. |
+| Feedback saver | Saves a JARVIS bug report or feedback locally when explicitly requested. |
+| Send message | Starts a supported chat and sends user-directed messages, with confirmation for sensitive messages. It does not read/monitor incoming inboxes or answer WhatsApp calls. |
+| System information | Reads available PC identity, OS, battery, CPU, memory, storage, and graphics details when asked. |
+| Weather | Retrieves a weather report from the configured online source. |
+| Web search | Searches current web information, news, research topics, prices, and comparisons. |
+| YouTube | Searches and plays videos/music, and supports available info, trending, and summary requests. |
 
-The files in `actions/` provide the bundled skills. Every action describes its own inputs and handler, so new capabilities can be added without placing all logic in `main.py`.
+## Assistant-integrated tools and background services
+
+These tools are implemented in `main.py` because they share the live conversation, camera, memory, or process lifecycle:
+
+| Tool | What it does |
+| --- | --- |
+| Live system status | Reports available CPU, RAM, GPU, temperature, uptime, and process metrics. |
+| Screen/camera vision | Captures the requested screen or webcam image for Gemini to analyze. |
+| Close camera | Stops the assistant's active camera view. |
+| Background topic monitor | Adds, lists, or removes topics for periodic web checks and alerts. |
+| Shutdown JARVIS | Closes the assistant when explicitly requested. |
+| Save memory / recall memory | Stores and retrieves local personal facts and preferences. |
+| Undo | Reverses supported recent changes made by JARVIS. |
+
+Background services also include optional wake-word sleep/wake, system alerts, session summaries, and proactive checks. These depend on their settings and the required services/sensors being available.
+
+## Included plugins
+
+Plugins are shown in Settings and can be enabled or disabled there. The repository currently includes:
+
+| Plugin | What it does | Requirements |
+| --- | --- | --- |
+| PowerPoint creator | Drafts a slide outline from a topic, builds a widescreen `.pptx`, and attempts to add relevant openly licensed Wikimedia Commons images and credits. | Gemini API access; `python-pptx`; internet for image lookup. |
+| Hand gestures | Optional system-wide cursor, click, drag/drop, zoom, scroll, media, screenshot, speech-interrupt, minimize, and confirmation gestures. | OpenCV, MediaPipe, PyAutoGUI, the hand-landmarker model, and a working camera. Start and stop it explicitly. |
+
+Generated presentations are saved under `downloads/presentations/`. Face authentication and voice-lock are settings/security features rather than entries in the plugin list; face support requires its optional recognition dependencies and an enrolled face. A local Master PIN is the fallback unlock method.
+
+The files in `actions/` and `plugins/` contain the tool implementations and their descriptions. A capability may still fail when its API, device, app, permission, account, or external service is unavailable; check the action result and console log before reporting success.
 
 ## Wake word and push-to-talk
 

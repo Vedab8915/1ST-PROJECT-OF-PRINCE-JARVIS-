@@ -82,6 +82,7 @@ _KEY_FILE = _BASE / "config" / "api_keys.json"
 FAST = "fast"      # short classification, extraction, one-line decisions
 SMART = "smart"    # reasoning, generation, long documents, images
 SEARCH = "search"  # grounded search — REST only, see below
+TEXT = "text"      # text generation — REST first for long structured documents
 
 # A rung that means "ask the Live model instead", through a short throwaway
 # session rather than the REST text API.
@@ -114,17 +115,22 @@ SEARCH = "search"  # grounded search — REST only, see below
 LIVE = "live"
 
 _LADDERS = {
-    FAST: (LIVE, "gemini-2.5-flash-lite", "gemini-2.5-flash"),
-    SMART: (LIVE, "gemini-2.5-flash", "gemini-2.5-flash-lite"),
+    FAST: ("gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash",
+           "gemini-3.5-flash", "gemini-flash-lite-latest", LIVE),
+    SMART: ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
+            "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", LIVE),
     # Grounded search needs response.candidates[...].grounding_metadata, which a
     # Live turn does not produce. REST only, and it says so rather than silently
     # returning an answer with no sources behind it.
-    SEARCH: ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"),
+    SEARCH: ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.7-flash",
+             "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"),
+    TEXT: ("gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.7-flash",
+           "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"),
 }
 
 # The Live model to use for one-shot calls. main.py owns the real one; this is
 # only the fallback for when this module is imported without it (tests).
-_LIVE_FALLBACK = "models/gemini-3.1-flash-live-preview"
+_LIVE_FALLBACK = "gemini-3.8-live"
 
 # How many one-shot Live sessions may exist at once.
 #

@@ -12,6 +12,7 @@
 # package, no OpenGL and no GPU. Nothing below was added for it.
 PyQt6>=6.6,<7
 PyQt6-WebEngine>=6.6,<7
+PyQt6-WebChannel>=6.6,<7
 sounddevice>=0.4,<1
 numpy>=1.24,<3
 google-genai>=2.8.0,<3
@@ -73,7 +74,7 @@ pdfplumber                   # file_processor — PDF text and tables
 PyPDF2                       # file_processor — PDF fallback reader
 python-docx                  # file_processor — .docx reading
 paho-mqtt                    # printer_control plugin — MQTT printers
-pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
+nvidia-ml-py                  # provides pynvml; maintained NVIDIA management bindings
 
 # ── Optional: heavy extras, install only if you want the feature ──────────────
 # Left out on purpose — together they are several hundred megabytes, which is a

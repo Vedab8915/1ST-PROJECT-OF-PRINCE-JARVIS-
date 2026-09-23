@@ -33,7 +33,7 @@ try:
 except ImportError:
     _TRANSCRIPT_OK = False
 
-from config import get_os, is_windows, is_mac, is_linux
+from core.os_utils import get_os, is_windows, is_mac, is_linux
 
 
 def _get_base_dir() -> Path:
@@ -282,9 +282,11 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
         return []
 
 def _handle_play(parameters: dict, player) -> str:
-    query = parameters.get("query", "").strip()
+    query = str(parameters.get("query") or "").strip()
     if not query:
-        return "Please tell me what you'd like to watch, sir."
+        # Covers natural requests such as "play a good song" when the model
+        # understands the action but leaves the search query empty.
+        query = "popular music hits"
 
     if player:
         player.write_log(f"[YouTube] Searching: {query}")
@@ -444,7 +446,7 @@ def youtube_video(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "youtube_video",
-    "description": "Controls YouTube. Use for: playing videos, summarizing a video's content, getting video info, or showing trending videos.",
+    "description": "Use whenever the user wants YouTube music or video PLAYED: 'play a good song', 'play [song/artist/video name]', 'put on music'. For a named song, put the exact title/artist in query and play the closest matching video. For 'a good song' with no title, query='popular music hits'. This searches YouTube and opens the first matching video. Do not use open_app for playback. Use open_app only if they only ask to open YouTube. Also supports summarize, get_info, trending.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -454,7 +456,7 @@ TOOL = {
             },
             "query": {
                 "type": "STRING",
-                "description": "Search query for play action"
+                "description": "Exact song/video title and artist when given; otherwise use 'popular music hits' for a request to play a good song."
             },
             "save": {
                 "type": "BOOLEAN",

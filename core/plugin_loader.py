@@ -249,6 +249,11 @@ def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
                 sys.modules.pop(module_name, None)
                 raise
 
+            # Utility modules may live alongside plugins. A module that does
+            # not export PLUGIN metadata is a helper, not a rejected plugin.
+            if getattr(module, "PLUGIN", None) is None:
+                continue
+
             rec = _validate(module, path.name)
 
             if rec.valid and rec.name in core_tool_names:

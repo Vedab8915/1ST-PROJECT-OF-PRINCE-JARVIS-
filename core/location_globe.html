@@ -13,14 +13,26 @@
     #status { position: absolute; z-index: 3; bottom: 30px; left: 12px; max-width: 75%;
       padding: 7px 10px; color: #8ffcff; background: #001018dd; border: 1px solid #0d6077;
       border-radius: 4px; font: 12px 'Bahnschrift', sans-serif; pointer-events: none; }
+    #details { position: absolute; z-index: 3; top: 12px; left: 12px; width: min(370px, 68%);
+      padding: 10px 12px; color: #d7f8ff; background: rgba(0, 12, 20, .9);
+      border: 1px solid #0d6077; border-radius: 5px; font: 12px/1.5 'Bahnschrift', sans-serif;
+      pointer-events: none; box-shadow: 0 4px 18px #0008; }
+    #details .place { color: #43e8ff; font-size: 14px; font-weight: 700; }
+    #details .muted { color: #85aeb8; }
   </style>
 </head>
 <body>
   <div id="map"></div><div id="status">SATELLITE GLOBE · Ready</div>
+  <div id="details"><span class="muted">Choose MY LOCATION or search a place for local details and current weather.</span></div>
   <script src="https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js"
     onerror="document.getElementById('status').textContent='MAP RENDERER UNAVAILABLE · Check internet access'"></script>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
   <script>
     const status = document.getElementById('status');
+    let jarvisBridge = null;
+    if (window.qt && qt.webChannelTransport) {
+      new QWebChannel(qt.webChannelTransport, channel => { jarvisBridge = channel.objects.jarvisBridge; });
+    }
     const map = new maplibregl.Map({
       container: 'map',
       style: {
@@ -31,31 +43,106 @@
             type: 'raster',
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
+            // Esri's high-resolution cache is not populated at every zoom in
+            // every area. Declare the native detail ceiling so MapLibre
+            // enlarges the last available satellite tile instead of asking
+            // the service for empty tiles when the user keeps zooming.
+            maxzoom: 19,
             attribution: 'Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
           }
         },
-        layers: [{id: 'satellite', type: 'raster', source: 'imagery'}],
+        layers: [{id: 'satellite', type: 'raster', source: 'imagery', 'raster-resampling': 'linear'}],
         sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] }
       },
-      center: [20, 20], zoom: 1.6, pitch: 0, attributionControl: true
+      center: [20, 20], zoom: 1.6, maxZoom: 22, pitch: 0, attributionControl: true
     });
     map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), 'top-right');
     map.on('load', () => { map.setFog({}); status.textContent = 'SATELLITE GLOBE · Search a place or locate this device'; });
-    map.on('error', (e) => { if (e && e.error) status.textContent = 'Map imagery connection issue · Check internet access'; });
+    // Individual imagery tiles may be absent at a location/zoom. Keep the map
+    // useful and retain the closest available imagery instead of replacing the
+    // location status with a frightening "data not found" message.
+    map.on('error', (e) => { if (e && e.error) console.warn('[Map imagery]', e.error.message || e.error); });
+    map.on('zoomend', () => {
+      if (map.getZoom() > 19) {
+        status.textContent = 'SATELLITE VIEW · Enlarging the closest available imagery';
+      } else if (status.textContent.includes('Enlarging the closest available imagery')) {
+        status.textContent = 'SATELLITE VIEW · Native imagery detail';
+      }
+    });
     let marker = null;
-    function flyTo(lon, lat, label) {
+    function weatherText(code) {
+      return ({0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',
+        45:'Fog',48:'Freezing fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',
+        61:'Light rain',63:'Rain',65:'Heavy rain',66:'Freezing rain',67:'Heavy freezing rain',
+        71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Rain showers',
+        81:'Rain showers',82:'Heavy rain showers',85:'Snow showers',86:'Heavy snow showers',
+        95:'Thunderstorm',96:'Thunderstorm with hail',99:'Severe thunderstorm'})[code] || 'Conditions unavailable';
+    }
+    async function loadPlaceDetails(lat, lon, initialLabel, requestId) {
+      const box = document.getElementById('details');
+      box.textContent = 'Loading place details and local weather…';
+      let place = initialLabel || '';
+      let address = null;
+      try {
+        const rev = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=16&addressdetails=1`,
+          {headers: {'Accept':'application/json'}});
+        if (rev.ok) {
+          address = await rev.json();
+          place = address.name || address.address?.city || address.address?.town ||
+            address.address?.village || address.address?.county || place;
+        }
+      } catch (_) { /* coordinates remain useful when geocoding is unavailable */ }
+      let weatherLine = 'Weather details unavailable';
+      let extra = '';
+      let reportWeather = null;
+      try {
+        const q = new URLSearchParams({latitude:String(lat),longitude:String(lon),
+          current:'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m',
+          daily:'temperature_2m_max,temperature_2m_min,sunrise,sunset',timezone:'auto',forecast_days:'1'});
+        const wr = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`);
+        if (wr.ok) {
+          const w = await wr.json(), c = w.current || {}, d = w.daily || {};
+          weatherLine = `${weatherText(c.weather_code)} · ${Math.round(c.temperature_2m)}°C, feels ${Math.round(c.apparent_temperature)}°C`;
+          extra = `Humidity ${Math.round(c.relative_humidity_2m)}% · Wind ${Math.round(c.wind_speed_10m)} km/h · Rain ${Number(c.precipitation || 0).toFixed(1)} mm`;
+          if (d.temperature_2m_min?.length) extra += ` · Today ${Math.round(d.temperature_2m_min[0])}°–${Math.round(d.temperature_2m_max[0])}°C`;
+          if (c.time) extra += ` · Local time ${c.time.replace('T',' ')}`;
+          reportWeather = {description:weatherText(c.weather_code), temperature_c:c.temperature_2m,
+            feels_like_c:c.apparent_temperature, humidity_percent:c.relative_humidity_2m,
+            wind_kmh:c.wind_speed_10m, precipitation_mm:c.precipitation,
+            today_low_c:d.temperature_2m_min?.[0], today_high_c:d.temperature_2m_max?.[0],
+            local_time:c.time};
+        }
+      } catch (_) { /* keep the place and coordinates visible without weather */ }
+      const bits = address?.address || {};
+      const region = [bits.city || bits.town || bits.village || bits.county, bits.state, bits.country]
+        .filter((v, i, a) => v && a.indexOf(v) === i).join(', ');
+      const head = document.createElement('div'); head.className = 'place';
+      head.textContent = place || initialLabel || 'Selected location';
+      const coord = document.createElement('div'); coord.className = 'muted';
+      coord.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}${region ? ' · ' + region : ''}`;
+      const weather = document.createElement('div'); weather.textContent = weatherLine;
+      const other = document.createElement('div'); other.className = 'muted'; other.textContent = extra;
+      box.replaceChildren(head, coord, weather, other);
+      if (jarvisBridge) jarvisBridge.reportLocation(JSON.stringify({
+        request_id: requestId || '',
+        name: place || initialLabel || 'Selected location', region: region,
+        latitude:lat, longitude:lon, weather:reportWeather
+      }));
+    }
+    function flyTo(lon, lat, label, requestId) {
       if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
       status.textContent = 'FLIGHT PATH · ' + label;
       map.flyTo({center: [lon, lat], zoom: 15, pitch: 48, curve: 1.5, speed: 0.72, essential: true});
+      loadPlaceDetails(lat, lon, label.startsWith('YOUR LOCATION') ? '' : label, requestId);
       if (marker) marker.remove();
       marker = new maplibregl.Marker({color: '#00d4ff'}).setLngLat([lon, lat]).setPopup(
         new maplibregl.Popup({offset: 24}).setText(label)
       ).addTo(map);
       map.once('moveend', () => { status.textContent = label.toUpperCase() + ' · SATELLITE VIEW'; marker.togglePopup(); });
     }
-    window.jarvisFlyTo = async (place) => {
+    window.jarvisFlyTo = async (place, requestId) => {
       const query = String(place || '').trim();
-      if (!query) return window.jarvisLocate();
+      if (!query) return window.jarvisLocate(requestId);
       status.textContent = 'SEARCHING · ' + query;
       try {
         const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(query);
@@ -63,15 +150,15 @@
         if (!response.ok) throw new Error('geocoder unavailable');
         const results = await response.json();
         if (!results.length) { status.textContent = 'PLACE NOT FOUND · ' + query; return; }
-        flyTo(Number(results[0].lon), Number(results[0].lat), results[0].display_name.split(',').slice(0, 3).join(','));
+        flyTo(Number(results[0].lon), Number(results[0].lat), results[0].display_name, requestId);
       } catch (_) { status.textContent = 'PLACE SEARCH FAILED · Check internet access'; }
     };
-    window.jarvisLocate = () => {
+    window.jarvisLocate = (requestId) => {
       if (!navigator.geolocation) { status.textContent = 'LOCATION UNAVAILABLE · Device location service not supported'; return; }
       status.textContent = 'REQUESTING DEVICE LOCATION · Allow the permission prompt';
       navigator.geolocation.getCurrentPosition(
         pos => flyTo(pos.coords.longitude, pos.coords.latitude,
-          'YOUR LOCATION · ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4)),
+          'YOUR LOCATION · ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4), requestId),
         err => { status.textContent = err.code === 1 ? 'LOCATION DENIED · Allow location access to continue' : 'LOCATION UNAVAILABLE · Enable Windows location services'; },
         {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000}
       );

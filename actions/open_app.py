@@ -2,6 +2,9 @@ import time
 import subprocess
 import platform
 import shutil
+import threading
+import os
+import re
 
 try:
     import psutil
@@ -10,8 +13,32 @@ except ImportError:
     _PSUTIL = False
 
 _SYSTEM = platform.system()
+_OPEN_LOCK = threading.Lock()
+_OPEN_RECENT: dict[str, float] = {}
+_OPEN_DEDUPE_SECONDS = 20.0
+
+
+def _duplicate_open(key: str) -> bool:
+    """Collapse repeated identical launch requests from one assistant turn."""
+    now = time.monotonic()
+    with _OPEN_LOCK:
+        expired = [name for name, stamp in _OPEN_RECENT.items()
+                   if now - stamp > _OPEN_DEDUPE_SECONDS]
+        for name in expired:
+            _OPEN_RECENT.pop(name, None)
+        previous = _OPEN_RECENT.get(key)
+        if previous is not None and now - previous <= _OPEN_DEDUPE_SECONDS:
+            return True
+        _OPEN_RECENT[key] = now
+        return False
 
 _APP_ALIASES: dict[str, dict[str, str]] = {
+
+    # YouTube is a site rather than a desktop app. Route its open command to
+    # the default browser instead of asking the OS app launcher to find it.
+    "youtube":            {"Windows": "https://www.youtube.com/", "Darwin": "https://www.youtube.com/", "Linux": "https://www.youtube.com/"},
+    "yt":                 {"Windows": "https://www.youtube.com/", "Darwin": "https://www.youtube.com/", "Linux": "https://www.youtube.com/"},
+    "youtube music":      {"Windows": "https://music.youtube.com/", "Darwin": "https://music.youtube.com/", "Linux": "https://music.youtube.com/"},
 
     "chrome":             {"Windows": "chrome",                  "Darwin": "Google Chrome",        "Linux": "google-chrome"},
     "google chrome":      {"Windows": "chrome",                  "Darwin": "Google Chrome",        "Linux": "google-chrome"},
@@ -71,19 +98,26 @@ def _normalize(raw: str) -> str:
     if key in _APP_ALIASES:
         return _APP_ALIASES[key].get(_SYSTEM, raw)
 
-    for alias_key, os_map in _APP_ALIASES.items():
-        if alias_key in key or key in alias_key:
-            return os_map.get(_SYSTEM, raw)
+    # Prefer the most specific alias (e.g. "YouTube Music" over "YouTube").
+    matches = [
+        alias for alias in _APP_ALIASES
+        if re.search(r"(?<![\w])" + re.escape(alias) + r"(?![\w])", key)
+    ]
+    if matches:
+        alias_key = max(matches, key=len)
+        return _APP_ALIASES[alias_key].get(_SYSTEM, raw)
 
     return raw  
 
 def _launch_windows(app_name: str) -> bool:
-
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+    # Launch a resolved executable directly; shell=True hid failures and let
+    # an app string become an unintended shell command.
+    binary = shutil.which(app_name) or shutil.which(app_name.split(".")[0])
+    if binary:
         try:
             subprocess.Popen(
-                app_name,
-                shell=True,
+                [binary],
+                shell=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -92,9 +126,9 @@ def _launch_windows(app_name: str) -> bool:
         except Exception as e:
             print(f"[open_app] subprocess failed: {e}")
 
-    if ":" in app_name:
+    if app_name.casefold().startswith("ms-settings:"):
         try:
-            subprocess.Popen(f"start {app_name}", shell=True)
+            os.startfile(app_name)
             time.sleep(1.0)
             return True
         except Exception:
@@ -109,7 +143,21 @@ def _launch_windows(app_name: str) -> bool:
         time.sleep(0.9)
         pyautogui.press("enter")
         time.sleep(2.5)
-        return True
+        process_hint = app_name.casefold().replace(".exe", "")
+        if _PSUTIL:
+            try:
+                for proc in psutil.process_iter(["name"]):
+                    name = (proc.info.get("name") or "").casefold().removesuffix(".exe")
+                    if process_hint and (name == process_hint or process_hint in name):
+                        return True
+            except Exception:
+                pass
+        try:
+            import pygetwindow
+            active = pygetwindow.getActiveWindow()
+            return bool(active and process_hint and process_hint in active.title.casefold())
+        except Exception:
+            return False
     except Exception as e:
         print(f"[open_app] Start Menu search failed: {e}")
 
@@ -255,10 +303,19 @@ def open_app(
     normalized = _normalize(app_name)
     print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})")
 
+    request_key = normalized.strip().lower()
+    if _duplicate_open(request_key):
+        return f"{app_name} was just opened; keeping the existing app or tab."
+
     if player:
         player.write_log(f"[open_app] {app_name}")
 
     try:
+        if normalized.startswith(("https://", "http://")):
+            import webbrowser
+            if webbrowser.open(normalized):
+                return f"Opened {app_name}."
+            return f"Could not open {app_name} in the default browser."
         if launcher(normalized):
             return f"Opened {app_name}."
         if normalized.lower() != app_name.lower():
@@ -276,7 +333,7 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
+    "description": "Open an app or website only when the user asks. Use for 'open WhatsApp', 'open YouTube', or a named app. On Windows, resolve a known executable or use Start search and verify launch instead of treating a key press as success. For YouTube playback use youtube_video; for messages use send_message. Never claim success when launch was not confirmed.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

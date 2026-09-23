@@ -120,16 +120,38 @@ def _distance(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
+def _joint_angle(a, b, c) -> float:
+    """Angle ABC in degrees; a straight finger is close to 180 degrees."""
+    u = (a[0] - b[0], a[1] - b[1])
+    v = (c[0] - b[0], c[1] - b[1])
+    den = max(_distance((0.0, 0.0), u) * _distance((0.0, 0.0), v), 1e-8)
+    cosine = max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1]) / den))
+    return __import__("math").degrees(__import__("math").acos(cosine))
+
+
+def _finger_states(p):
+    """Return index-to-pinky extension using joint angles and hand-relative scale."""
+    palm = max(_distance(p[0], p[9]), 0.04)
+    states = []
+    for mcp, pip, tip in ((5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20)):
+        angle = _joint_angle(p[mcp], p[pip], p[tip])
+        reach = _distance(p[mcp], p[tip])
+        base = _distance(p[mcp], p[pip])
+        states.append(angle >= 148.0 and reach >= base + palm * 0.10)
+    return states
+
+
 def _pose(p):
-    """Classify basic poses from normalized hand landmarks."""
-    # For a raised hand, a fingertip above its PIP joint means extended.
-    extended = [p[tip][1] < p[pip][1] - 0.025
-                for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))]
-    thumb_extended = _distance(p[4], p[2]) > _distance(p[3], p[2]) * 1.35
-    thumb_up = p[4][1] < p[3][1] - 0.04
-    thumb_down = p[4][1] > p[3][1] + 0.05
+    """Classify poses independent of whether the hand points up or sideways."""
+    extended = _finger_states(p)
+    palm = max(_distance(p[0], p[9]), 0.04)
+    thumb_extended = (
+        _distance(p[4], p[5]) > _distance(p[3], p[5]) + palm * 0.10
+    )
+    thumb_up = p[4][1] < p[3][1] - palm * 0.20
+    thumb_down = p[4][1] > p[3][1] + palm * 0.20
     index, middle, ring, pinky = extended
-    if all(extended) and _distance(p[4], p[5]) > 0.10:
+    if all(extended) and thumb_extended:
         return "OPEN"
     if index and thumb_extended and not middle and not ring and not pinky:
         return "L_SHAPE"
@@ -216,9 +238,11 @@ class _GestureController:
             self.last_motion.clear()
             return
 
-        # Pointing with either index finger controls the global desktop pointer.
-        pointer = hands.get("Right") if hands.get("Right", {}).get("pose") == "POINT" else None
-        pointer = pointer or next((h for h in hands.values() if h["pose"] == "POINT"), None)
+        # Only the index fingertip controls the desktop pointer. Other detected
+        # landmarks and pose classifications never reposition it.
+        pointer_poses = {"POINT", "L_SHAPE"}
+        pointer = hands.get("Right") if hands.get("Right", {}).get("pose") in pointer_poses else None
+        pointer = pointer or next((h for h in hands.values() if h["pose"] in pointer_poses), None)
         if pointer:
             self._cursor(pointer["points"][8])
 
@@ -242,8 +266,9 @@ class _GestureController:
             self.zoom_anchor = None
             if pinched:
                 hand = pinched[0]
-                self._cursor(((hand["points"][4][0] + hand["points"][8][0]) / 2,
-                              (hand["points"][4][1] + hand["points"][8][1]) / 2))
+                # Dragging may move the pointer, but it is still anchored to
+                # that same index-finger tip used by pointing mode.
+                self._cursor(hand["points"][8])
                 if not self.dragging:
                     self.pg.mouseDown(button="left")
                     self.dragging = True
@@ -269,7 +294,7 @@ class _GestureController:
                 self.pose_since[side] = now + 10
             elif pose == "FIST" and previous == "OPEN" and self._action_ready():
                 self._minimize_all()
-            elif pose == "FIST" and previous == "POINT" and self._action_ready(0.25):
+            elif pose == "FIST" and previous in ("POINT", "L_SHAPE") and self._action_ready(0.25):
                 # Fold right index = left click; fold left index = right click.
                 button = "left" if side == "Right" else "right"
                 self.pg.click(button=button)

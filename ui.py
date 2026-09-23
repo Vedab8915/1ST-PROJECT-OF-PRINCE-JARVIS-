@@ -22,7 +22,7 @@ else:
 
 from PyQt6.QtCore import (
     QEasingCurve, QEvent, QMimeData, QObject, QParallelAnimationGroup, QPointF,
-    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal,
+    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot,
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebChannel import QWebChannel
 
 # ── P.R.I.N.C.E identity ─────────────────────────────────────────────────────
 # One constant drives the window title, header badge and protocol display.
@@ -906,8 +907,7 @@ class HudCanvas(QWidget):
             led = "●" if self._tick // 24 % 2 else "○"
             txt, col = f"{led}  MUTED", qcol(C.MUTED_C, 255 if led == "●" else 125)
         elif state == "SPEAKING":
-            bars = ("▁▃▅▃", "▃▅▃▁", "▅▃▁▃", "▃▁▃▅")[self._tick // 4 % 4]
-            txt, col = f"{bars}  SPEAKING  {bars}", qcol(C.ACC)
+            txt, col = "♪  SPEAKING", qcol(C.ACC)
         elif state == "THINKING":
             txt, col = f"◈  THINKING{dots}", qcol(C.ACC2)
         elif state == "PROCESSING":
@@ -924,9 +924,20 @@ class HudCanvas(QWidget):
         else:
             txt, col = f"●  {state}", qcol(C.PRI)
 
-        p.setPen(QPen(col, 1))
         p.setFont(self._hud_font_status)
-        p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+        # A slow, low-hop letter animation keeps every status refined while
+        # leaving the central orb and its arcs untouched.
+        metrics = p.fontMetrics()
+        x = (W - metrics.horizontalAdvance(txt)) / 2
+        baseline = sy + (26 - metrics.height()) / 2 + metrics.ascent()
+        for i, char in enumerate(txt):
+            phase = self._tick * 0.065 - i * 0.52
+            hop = max(0.0, math.sin(phase)) * 2.0
+            letter_col = QColor(col)
+            letter_col.setAlpha(225 + int(max(0.0, math.sin(phase)) * 30))
+            p.setPen(QPen(letter_col, 1))
+            p.drawText(QPointF(x, baseline - hop), char)
+            x += metrics.horizontalAdvance(char)
 
         p.end()   # end deterministically so the backing store never flushes an active painter
 
@@ -1424,7 +1435,7 @@ class SetupOverlay(QWidget):
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("AIza…")
+        self._key_input.setPlaceholderText("PASTE YOUR API KEY HERE....")
         self._key_input.setFont(QFont(UI_FONT, 10))
         self._key_input.setFixedHeight(32)
         self._key_input.setStyleSheet(f"""
@@ -1449,9 +1460,15 @@ class SetupOverlay(QWidget):
 
         os_row = QHBoxLayout(); os_row.setSpacing(6)
         self._os_btns: dict[str, QPushButton] = {}
-        for key, label in [("windows","⊞  Windows"),("mac","  macOS"),("linux","🐧  Linux")]:
-            btn = QPushButton(label)
-            btn.setFont(QFont(UI_FONT, 9, QFont.Weight.Bold))
+        for key, icon, name in [
+            ("windows", "⊞", "Windows"),
+            ("mac", "🍎", "macOS"),
+            ("linux", "🐧", "Linux"),
+        ]:
+            btn = QPushButton(icon)
+            btn.setToolTip(name)
+            btn.setAccessibleName(name)
+            btn.setFont(QFont("Segoe UI Emoji", 12, QFont.Weight.Bold))
             btn.setFixedHeight(32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _, k=key: self._sel(k))
@@ -3773,7 +3790,7 @@ class JarvisSettingsHub(_HudOverlay):
         key_row = QHBoxLayout(); key_row.setSpacing(6)
         self._key_box = QLineEdit(cfg.get("gemini_api_key", ""))
         self._key_box.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_box.setPlaceholderText("AIzaSy...")
+        self._key_box.setPlaceholderText("PASTE YOUR API KEY HERE....")
         self._key_box.setFont(QFont(UI_FONT, 9))
         self._key_box.setFixedHeight(32)
         self._key_box.setStyleSheet(f"""
@@ -3827,10 +3844,16 @@ class JarvisSettingsHub(_HudOverlay):
         c2_lay.addWidget(self._dim_label(f"Native environment detected: {_OS}"))
         os_row = QHBoxLayout(); os_row.setSpacing(8)
         self._os_pills: dict[str, QPushButton] = {}
-        for osk, oslbl in [("windows", "⊞  Windows"), ("mac", "  macOS"), ("linux", "🐧  Linux")]:
-            b = QPushButton(oslbl)
+        for osk, osicon, osname in [
+            ("windows", "⊞", "Windows"),
+            ("mac", "🍎", "macOS"),
+            ("linux", "🐧", "Linux"),
+        ]:
+            b = QPushButton(osicon)
+            b.setToolTip(osname)
+            b.setAccessibleName(osname)
             b.setFixedHeight(32)
-            b.setFont(QFont(UI_FONT, 8, QFont.Weight.Bold))
+            b.setFont(QFont("Segoe UI Emoji", 12, QFont.Weight.Bold))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _, k=osk: self._set_os_subsystem(k))
             os_row.addWidget(b)
@@ -5053,15 +5076,26 @@ class JarvisSettingsHub(_HudOverlay):
         super().keyPressEvent(e)
 
 
+class _LocationBridge(QObject):
+    report = pyqtSignal(str)
+
+    @pyqtSlot(str)
+    def reportLocation(self, payload: str):
+        self.report.emit(payload[:8000])
+
+
 class LocationGlobe(QWidget):
     """In-app satellite globe with search, location permission, and flight animation."""
     close_requested = pyqtSignal()
+    location_report = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pending: str | None = None
         self._loaded = False
         self._started = False
+        self._mode = "earth"
+        self._request_id = ""
         self.setStyleSheet(f"background: {C.BG};")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(7, 6, 7, 7)
@@ -5084,11 +5118,17 @@ class LocationGlobe(QWidget):
         bar.addWidget(self._place)
         self._add_button(bar, "FLY TO", self._search)
         self._add_button(bar, "MY LOCATION", self._locate)
+        self._add_button(bar, "SOLAR SYSTEM", lambda: self.navigate("solar system"))
         self._add_button(bar, "CLOSE  ✕", lambda: self.close_requested.emit())
         layout.addLayout(bar)
 
         self.view = QWebEngineView(self)
         self.page = self.view.page()
+        self._bridge = _LocationBridge(self)
+        self._bridge.report.connect(self.location_report)
+        self._channel = QWebChannel(self.page)
+        self._channel.registerObject("jarvisBridge", self._bridge)
+        self.page.setWebChannel(self._channel)
         self.view.settings().setAttribute(
             QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
         )
@@ -5114,10 +5154,38 @@ class LocationGlobe(QWidget):
         button.clicked.connect(callback)
         bar.addWidget(button)
 
-    def navigate(self, place: str = ""):
-        self._pending = str(place or "").strip()
-        if not self._started:
+    def navigate(self, place: str = "", request_id: str = ""):
+        query = str(place or "").strip()
+        self._request_id = str(request_id or "")
+        words = set(re.findall(r"[a-z]+", query.lower()))
+        body_aliases = {
+            "sun": ("sun", "sol"), "mercury": ("mercury",),
+            "venus": ("venus",), "earth": ("earth",),
+            "moon": ("moon", "luna"), "mars": ("mars",),
+            "jupiter": ("jupiter",), "saturn": ("saturn",),
+            "uranus": ("uranus",), "neptune": ("neptune",),
+            "pluto": ("pluto",),
+        }
+        body = next((name for name, aliases in body_aliases.items()
+                     if any(alias in words for alias in aliases)), None)
+        solar_overview = ("solar" in words and "system" in words) or "planets" in words
+        if body or solar_overview:
+            target = body or ""
+            url = "https://eyes.nasa.gov/apps/solar-system/"
+            if target:
+                url += f"#/{target}?"
+            self._pending = None
+            self._mode = "solar"
             self._started = True
+            self._loaded = False
+            self.view.load(QUrl(url))
+            return
+
+        self._pending = query
+        if not self._started or self._mode != "earth":
+            self._mode = "earth"
+            self._started = True
+            self._loaded = False
             map_path = Path(__file__).resolve().parent / "core" / "location_globe.html"
             self.view.load(QUrl.fromLocalFile(str(map_path)))
         if self._loaded:
@@ -5134,19 +5202,20 @@ class LocationGlobe(QWidget):
         place, self._pending = self._pending, None
         if place:
             import json as _json
-            self.view.page().runJavaScript(f"window.jarvisFlyTo({_json.dumps(place)});")
+            self.view.page().runJavaScript(
+                f"window.jarvisFlyTo({_json.dumps(place)}, {_json.dumps(self._request_id)});"
+            )
         else:
-            self.view.page().runJavaScript("window.jarvisLocate();")
+            import json as _json
+            self.view.page().runJavaScript(f"window.jarvisLocate({_json.dumps(self._request_id)});")
 
     def _search(self):
         value = self._place.text().strip()
         if value:
-            self._pending = value
-            self._run_pending()
+            self.navigate(value)
 
     def _locate(self):
-        self._pending = ""
-        self._run_pending()
+        self.navigate("")
 
     def _permission_requested(self, permission):
         from PyQt6.QtWebEngineCore import QWebEnginePermission
@@ -5157,8 +5226,8 @@ class LocationGlobe(QWidget):
         answer = QMessageBox.question(
             self, "ALLOW DEVICE LOCATION?",
             "JARVIS will use this PC's location service to mark your position. "
-            "Map imagery requests reveal the viewed map area to the map provider. "
-            "The location is not saved by Jarvis. Allow location access?",
+            "Your coordinates are sent to Esri for map tiles, OpenStreetMap for the place name, "
+            "and Open-Meteo for weather. Jarvis does not save them. Allow location access?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -5177,8 +5246,8 @@ class LocationGlobe(QWidget):
         answer = QMessageBox.question(
             self, "ALLOW DEVICE LOCATION?",
             "JARVIS will use this PC's location service to mark your position. "
-            "Map imagery requests reveal the viewed map area to the map provider. "
-            "The location is not saved by Jarvis. Allow location access?",
+            "Your coordinates are sent to Esri for map tiles, OpenStreetMap for the place name, "
+            "and Open-Meteo for weather. Jarvis does not save them. Allow location access?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -5204,7 +5273,7 @@ class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
-    _location_sig   = pyqtSignal(str)        # place name; empty means current location
+    _location_sig   = pyqtSignal(str, str)   # place name and request id
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
@@ -5327,6 +5396,9 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack.addWidget(_cam_cont)
         self._location_globe = LocationGlobe(self)
         self._location_globe.close_requested.connect(lambda: self._hud_cam_stack.setCurrentIndex(0))
+        self._location_globe.location_report.connect(self._on_location_report)
+        self._location_requests: dict[str, dict] = {}
+        self._location_request_lock = threading.Lock()
         self._hud_cam_stack.addWidget(self._location_globe)
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
@@ -5417,6 +5489,7 @@ class MainWindow(QMainWindow):
         self._startup_dialog = None
         self._startup_voice_busy = False
         self._cam_stop = threading.Event()
+        self._cam_thread: threading.Thread | None = None
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -5497,10 +5570,12 @@ class MainWindow(QMainWindow):
                 )
 
     def start_camera_stream(self) -> None:
+        if self._cam_thread is not None and self._cam_thread.is_alive():
+            return
         self._cam_stop.clear()
         self._cam_stream_sig.emit(True)
-        t = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
-        t.start()
+        self._cam_thread = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
+        self._cam_thread.start()
 
     def _cam_loop(self) -> None:
         try:
@@ -5534,10 +5609,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Camera] Stream error: {e}")
         finally:
-            self._cam_stream_sig.emit(False)
+            # The window may be closing while OpenCV is returning its last
+            # frame. Qt deletes the wrapped C++ object before this daemon thread
+            # necessarily exits, so its signal is best-effort during teardown.
+            try:
+                self._cam_stream_sig.emit(False)
+            except RuntimeError:
+                pass
 
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
+
+    def closeEvent(self, event) -> None:
+        self.stop_camera_stream()
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Icon generation — arc-reactor style, rendered with Pillow
@@ -6750,13 +6835,39 @@ class MainWindow(QMainWindow):
         self._content_panel.raise_()
         self._content_btn.setToolTip("Show new assistant results")
 
-    def _show_location(self, place: str):
+    def _show_location(self, place: str, request_id: str):
         self._hud_cam_stack.setCurrentIndex(2)
-        self._location_globe.navigate(place)
+        self._location_globe.navigate(place, request_id)
 
-    def show_location(self, place: str = ""):
-        """Thread-safe request to display current location or fly to a place."""
-        self._location_sig.emit(str(place or "")[:240])
+    def _on_location_report(self, payload: str):
+        try:
+            report = json.loads(payload)
+            request_id = str(report.get("request_id", ""))
+        except (ValueError, TypeError):
+            return
+        with self._location_request_lock:
+            pending = self._location_requests.get(request_id)
+            if pending is not None:
+                pending["report"] = report
+                pending["event"].set()
+
+    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0):
+        """Thread-safe map request; optionally wait for geocoding/weather details."""
+        request_id = str(time.monotonic_ns()) if wait_for_report else ""
+        pending = {"event": threading.Event(), "report": None} if request_id else None
+        if pending:
+            with self._location_request_lock:
+                self._location_requests[request_id] = pending
+        self._location_sig.emit(str(place or "")[:240], request_id)
+        if not pending:
+            return None
+        try:
+            if pending["event"].wait(max(0.0, float(timeout))):
+                return pending["report"]
+            return None
+        finally:
+            with self._location_request_lock:
+                self._location_requests.pop(request_id, None)
 
     def _on_file_selected(self, path: str):
         self._current_file = path
@@ -7592,9 +7703,9 @@ class JarvisUI:
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
 
-    def show_location(self, place: str = ""):
+    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0):
         """Thread-safe: open the in-app globe and locate or navigate."""
-        self._win.show_location(place)
+        return self._win.show_location(place, wait_for_report, timeout)
 
     def prompt_reconfig(self):
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""

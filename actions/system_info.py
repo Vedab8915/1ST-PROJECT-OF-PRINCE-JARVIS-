@@ -74,7 +74,7 @@ def _gpu_name() -> str:
 
 TOOL = {
     "name": "system_info",
-    "description": "Reports the PC's battery charge and charging state, computer name, OS, processor, RAM, storage, and available graphics adapter details. Use for questions about battery, laptop power, device name, or hardware specifications.",
+    "description": "On explicit user request only, reads real values from this computer: battery/charging, host name, OS, processor, RAM, storage, and available graphics adapter. Use for 'my PC specs', 'what computer/system is this', or battery questions. Never invent missing values: report unavailable fields as unavailable.",
     "parameters": {
         "type": "OBJECT",
         "properties": {"detail": {"type": "STRING", "description": "all (default) | battery | system"}},

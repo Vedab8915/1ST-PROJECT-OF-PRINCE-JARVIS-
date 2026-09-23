@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+import re
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +19,20 @@ try:
     _PYPERCLIP = True
 except ImportError:
     _PYPERCLIP = False
+
+_CHAT_LOCK = threading.Lock()
+_ACTIVE_CHAT: dict[str, str] = {}
+
+_SENSITIVE_MESSAGE = re.compile(
+    r"\b(password|passcode|otp|one.?time code|pin|bank|credit card|debit card|"
+    r"payment|salary|medical|diagnos|prescription|home address|live location|"
+    r"aadhaar|passport|social security|private photo|nude|resign|quit my job|"
+    r"legal action|police|threat|blackmail)\b", re.IGNORECASE,
+)
+
+
+def _send(platform: str, receiver: str, message: str) -> str:
+    return _resolve_platform(platform)(receiver, message)
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -150,7 +166,25 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
     return f"Message sent to {receiver} via {app_name}."
 
 def _send_whatsapp(receiver: str, message: str) -> str:
-    return _desktop_send("WhatsApp", receiver, message)
+    if not _open_app("WhatsApp"):
+        return "Could not open WhatsApp."
+
+    # Ctrl+N opens WhatsApp's new-chat/contact picker. Ctrl+F searches inside
+    # the current conversation on many WhatsApp builds, so it often misses the
+    # requested recipient entirely.
+    os_name = _get_os()
+    new_chat_hotkey = ("command", "n") if os_name == "mac" else ("ctrl", "n")
+    pyautogui.hotkey(*new_chat_hotkey)
+    time.sleep(0.7)
+    _paste_text(receiver)
+    time.sleep(1.0)
+    pyautogui.press("enter")
+    time.sleep(0.8)
+    _paste_text(message)
+    time.sleep(0.2)
+    pyautogui.press("enter")
+    time.sleep(0.3)
+    return f"Message sent to {receiver} via WhatsApp."
 
 def _send_telegram(receiver: str, message: str) -> str:
     return _desktop_send("Telegram", receiver, message)
@@ -240,9 +274,38 @@ def send_message(
     receiver     = params.get("receiver", "").strip()
     message_text = params.get("message_text", "").strip()
     platform     = params.get("platform", "whatsapp").strip()
+    mode         = str(params.get("mode", "send")).strip().lower()
+
+    if mode in {"stop", "pause"}:
+        with _CHAT_LOCK:
+            _ACTIVE_CHAT.clear()
+        return "The active messaging context has been cleared. No further message was sent."
+
+    if mode == "start_chat":
+        if not receiver:
+            return "Please specify the exact contact and platform before starting a chat."
+        if not _PYAUTOGUI:
+            return "PyAutoGUI is not installed — cannot control the desktop."
+        intro = (
+            "Hi, I'm Jarvis, Prince's AI assistant. Prince asked me to help with this conversation."
+        )
+        try:
+            result = _send(platform, receiver, intro)
+            if "sent" in result.lower():
+                with _CHAT_LOCK:
+                    _ACTIVE_CHAT.clear()
+                    _ACTIVE_CHAT.update(receiver=receiver, platform=platform)
+                return result + " I introduced myself as his AI assistant; tell me what to say next."
+            return result
+        except Exception as e:
+            return f"Could not start the conversation: {e}"
 
     if not receiver:
-        return "Please specify a recipient."
+        with _CHAT_LOCK:
+            receiver = _ACTIVE_CHAT.get("receiver", "")
+            platform = _ACTIVE_CHAT.get("platform", platform)
+        if not receiver:
+            return "Please specify a recipient, or start a conversation with an exact contact first."
     if not message_text:
         return "Please specify the message content."
     if not _PYAUTOGUI:
@@ -253,9 +316,17 @@ def send_message(
     if player:
         player.write_log(f"[msg] {platform} → {receiver}")
 
+    if _SENSITIVE_MESSAGE.search(message_text):
+        from core import confirm as confirm_gate
+        return confirm_gate.request(
+            key="send-sensitive-message",
+            title=f"Send sensitive {platform} message",
+            detail=f"To: {receiver}\nPlatform: {platform}\nMessage: {message_text[:240]}",
+            run=lambda: _send(platform, receiver, message_text),
+        )
+
     try:
-        handler = _resolve_platform(platform)
-        result  = handler(receiver, message_text)
+        result  = _send(platform, receiver, message_text)
     except Exception as e:
         result = f"Could not send message: {e}"
 
@@ -269,28 +340,28 @@ def send_message(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "send_message",
-    "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
+    "description": "For a user-requested conversation, use mode=start_chat with the exact contact and platform first; JARVIS sends a clear one-time AI-assistant introduction, then waits for the user's next instruction. Use mode=send for the message the user specifically asked to send; after a chat starts, receiver may be omitted. Tanglish style must only be used when the user explicitly says to talk like them. Sensitive messages are held behind the human HUD confirmation. Use mode=pause or stop immediately when the user says pause/stop. This tool only sends; it cannot read or monitor inboxes or answer incoming calls. For WhatsApp, starts a new chat and searches the contact. Never use open_app alone for a request to message someone.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
+            "mode": {
+                "type": "STRING",
+                "description": "send (default), start_chat (send the AI introduction before any user-directed conversation), pause, or stop",
+            },
             "receiver": {
                 "type": "STRING",
-                "description": "Recipient contact name"
+                "description": "Exact contact name the user specified"
             },
             "message_text": {
                 "type": "STRING",
-                "description": "The message to send"
+                "description": "The complete message text to send; preserve the user's meaning"
             },
             "platform": {
                 "type": "STRING",
-                "description": "Platform: WhatsApp, Telegram, etc."
+                "description": "The named messaging app (WhatsApp, Telegram, Instagram, Signal, Discord, Messenger); WhatsApp if unspecified"
             }
         },
-        "required": [
-            "receiver",
-            "message_text",
-            "platform"
-        ]
+        "required": [],
     },
     "handler": send_message,
 }

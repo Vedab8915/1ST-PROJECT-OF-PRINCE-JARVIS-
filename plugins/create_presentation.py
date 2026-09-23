@@ -2,17 +2,23 @@
 from __future__ import annotations
 
 import re
+import html
+import io
+import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 
 PLUGIN = {
     "name": "create_presentation",
     "description": (
-        "Create an editable PowerPoint for a topic the user gives. Generate the "
-        "slide content yourself before calling this tool: use a clear story, "
+        "MUST be used for every request to make/create/build a PowerPoint or PPT. "
+        "Pass the topic immediately; the tool creates the slide outline when one is not supplied. "
+        "Use a clear story, "
         "6–10 content slides unless the user asks for a different length, concise "
-        "bullets, a useful takeaway and visual idea for each slide, and include a "
-        "sources list for factual or current claims. The tool formats and saves "
+        "bullets, a useful takeaway and specific visual idea for each slide, and include a "
+        "sources list for factual or current claims. The tool finds and embeds relevant, "
+        "openly licensed Wikimedia Commons photographs for the slides and adds image credits. "
+        "It formats and saves "
         "the supplied outline as a polished widescreen .pptx in downloads/presentations. "
         "Do not call until you have a complete slide outline."
     ),
@@ -22,6 +28,10 @@ PLUGIN = {
             "topic": {"type": "STRING", "description": "The presentation topic."},
             "title": {"type": "STRING", "description": "Cover slide title."},
             "subtitle": {"type": "STRING", "description": "Short cover slide subtitle."},
+            "audience": {"type": "STRING", "description": "Intended audience, if the user specified one."},
+            "style": {"type": "STRING", "description": "Visual/tone direction such as executive, academic, or classroom."},
+            "slide_count": {"type": "INTEGER", "description": "Requested content slide count; defaults to 8."},
+            "requirements": {"type": "STRING", "description": "Extra user requirements to follow."},
             "slides": {
                 "type": "ARRAY",
                 "description": "Ordered content slides, excluding the cover and optional sources slide.",
@@ -46,7 +56,7 @@ PLUGIN = {
                 "description": "Source titles and URLs for factual claims, if applicable.",
             },
         },
-        "required": ["topic", "title", "slides"],
+        "required": ["topic"],
     },
 }
 
@@ -107,7 +117,7 @@ def _set_bullet(paragraph):
     ppr.append(bullet)
 
 
-def _content_slide(prs, item, index, total):
+def _content_slide(prs, item, index, total, image=None):
     from pptx.util import Inches, Pt
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     background = slide.background.fill
@@ -144,11 +154,21 @@ def _content_slide(prs, item, index, total):
     _add_box(slide, 8.32, 2.00, 0.09, 4.30, _TEAL)
     visual = str(item.get("visual_idea") or "Use a simple diagram or real-world example.").strip()[:280]
     takeaway = str(item.get("takeaway") or "Remember the main point from this section.").strip()[:280]
-    _add_text(slide, "VISUAL IDEA", 8.72, 2.34, 3.45, 0.30, 10, _TEAL, True)
-    _add_text(slide, visual, 8.72, 2.76, 3.45, 1.04, 16, _INK, True)
-    _add_box(slide, 8.72, 4.05, 3.45, 0.025, (221, 230, 238))
-    _add_text(slide, "KEY TAKEAWAY", 8.72, 4.32, 3.45, 0.30, 10, _BLUE, True)
-    _add_text(slide, takeaway, 8.72, 4.72, 3.45, 1.18, 15, _MUTED)
+    if image:
+        from pptx.util import Inches
+        slide.shapes.add_picture(image["stream"], Inches(8.41), Inches(2.08), Inches(4.17), Inches(2.35))
+        _add_text(slide, "VISUAL IDEA", 8.65, 4.58, 3.62, 0.22, 9, _TEAL, True)
+        _add_text(slide, visual, 8.65, 4.84, 3.62, 0.54, 12, _INK, True)
+        _add_box(slide, 8.65, 5.46, 3.62, 0.025, (221, 230, 238))
+        _add_text(slide, "KEY TAKEAWAY", 8.65, 5.59, 1.55, 0.20, 8, _BLUE, True)
+        _add_text(slide, takeaway, 10.15, 5.56, 2.10, 0.48, 10, _MUTED)
+        _add_text(slide, image["credit"], 8.65, 6.10, 3.62, 0.14, 6, _MUTED)
+    else:
+        _add_text(slide, "VISUAL IDEA", 8.72, 2.34, 3.45, 0.30, 10, _TEAL, True)
+        _add_text(slide, visual, 8.72, 2.76, 3.45, 1.04, 16, _INK, True)
+        _add_box(slide, 8.72, 4.05, 3.45, 0.025, (221, 230, 238))
+        _add_text(slide, "KEY TAKEAWAY", 8.72, 4.32, 3.45, 0.30, 10, _BLUE, True)
+        _add_text(slide, takeaway, 8.72, 4.72, 3.45, 1.18, 15, _MUTED)
     _add_text(slide, f"{index:02d}  /  {total:02d}", 11.30, 6.95, 1.35, 0.24, 9, _MUTED)
     return slide
 
@@ -168,19 +188,20 @@ def _cover(prs, title, subtitle, topic):
     return slide
 
 
-def _sources_slide(prs, sources):
+def _sources_slide(prs, sources, page=1, pages=1):
     from pptx.util import Inches, Pt
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = _PAPER
+    slide.background.fill.fore_color.rgb = _rgb(_PAPER)
     _add_box(slide, 0, 0, 13.333, 0.12, _TEAL)
-    _add_text(slide, "SOURCES", 0.72, 0.62, 10, 0.7, 28, _NAVY, True)
+    heading = "SOURCES & IMAGE CREDITS" if pages == 1 else f"SOURCES & IMAGE CREDITS  {page}/{pages}"
+    _add_text(slide, heading, 0.72, 0.62, 11.7, 0.7, 25, _NAVY, True)
     _add_box(slide, 0.74, 1.40, 0.78, 0.055, _TEAL)
     body = slide.shapes.add_textbox(Inches(0.82), Inches(1.82), Inches(11.7), Inches(4.9))
     frame = body.text_frame
     frame.clear()
     frame.word_wrap = True
-    for i, source in enumerate(sources[:20]):
+    for i, source in enumerate(sources):
         paragraph = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
         paragraph.text = str(source).strip()[:500]
         paragraph.space_after = Pt(12)
@@ -188,6 +209,65 @@ def _sources_slide(prs, sources):
         paragraph.font.size = Pt(14)
         paragraph.font.color.rgb = _rgb(_INK)
     return slide
+
+
+def _plain(value: str, limit: int = 180) -> str:
+    value = re.sub(r"<[^>]*>", " ", html.unescape(str(value or "")))
+    return " ".join(value.split())[:limit]
+
+
+def _commons_image(item: dict, topic: str) -> dict | None:
+    """Fetch a relevant Commons image only when its reuse license is clear."""
+    try:
+        import requests
+        from PIL import Image, ImageOps
+
+        title = str(item.get("title", "")).strip()
+        visual = str(item.get("visual_idea", "")).strip()
+        query = " ".join(part for part in (topic, title, visual[:90]) if part)
+        response = requests.get(
+            "https://commons.wikimedia.org/w/api.php",
+            params={
+                "action": "query", "generator": "search", "gsrsearch": f"filetype:bitmap {query}",
+                "gsrnamespace": 6, "gsrlimit": 6, "prop": "imageinfo",
+                "iiprop": "url|extmetadata", "iiurlwidth": 1200, "format": "json",
+            },
+            headers={"User-Agent": "JarvisPresentation/1.0 (PowerPoint image sourcing)"},
+            timeout=12,
+        )
+        response.raise_for_status()
+        pages = response.json().get("query", {}).get("pages", {})
+        for page in pages.values():
+            info = (page.get("imageinfo") or [{}])[0]
+            meta = info.get("extmetadata", {})
+            license_name = _plain((meta.get("LicenseShortName") or {}).get("value", ""), 80)
+            lower_license = license_name.lower()
+            if not any(token in lower_license for token in ("public domain", "cc0", "cc by")):
+                continue
+            if "nc" in lower_license or "nd" in lower_license:
+                continue
+            image_url = info.get("thumburl") or info.get("url") or ""
+            if not image_url.startswith("https://upload.wikimedia.org/"):
+                continue
+            image_response = requests.get(image_url, timeout=18, headers={"User-Agent": "JarvisPresentation/1.0"})
+            image_response.raise_for_status()
+            if len(image_response.content) > 10_000_000:
+                continue
+            source_image = Image.open(io.BytesIO(image_response.content))
+            if source_image.width * source_image.height > 30_000_000:
+                continue
+            source_image = ImageOps.fit(source_image.convert("RGB"), (1200, 675))
+            stream = io.BytesIO()
+            source_image.save(stream, format="JPEG", quality=88, optimize=True)
+            stream.seek(0)
+            author = _plain((meta.get("Artist") or {}).get("value", "Unknown"), 70)
+            image_title = _plain(page.get("title", "Commons image").removeprefix("File:"), 90)
+            source_page = str(info.get("descriptionurl", ""))
+            credit = f"{image_title} · {author} · {license_name} · Wikimedia Commons"
+            return {"stream": stream, "credit": credit, "source": source_page}
+    except Exception as exc:
+        print(f"[Presentation] Commons image unavailable: {exc}")
+    return None
 
 
 def run(parameters: dict) -> str:
@@ -201,8 +281,38 @@ def run(parameters: dict) -> str:
     topic = str(params.get("topic") or "").strip()
     title = str(params.get("title") or topic).strip()
     slides = params.get("slides")
-    if not topic or not title:
-        return "Please provide a topic and presentation title."
+    if not topic:
+        return "Please provide the presentation topic."
+    if not isinstance(slides, list) or len(slides) < 2:
+        slide_count = max(4, min(12, int(params.get("slide_count") or 8)))
+        audience = str(params.get("audience") or "general professional audience").strip()
+        style = str(params.get("style") or "clean, modern, professional").strip()
+        requirements = str(params.get("requirements") or "").strip()
+        prompt = (
+            "Create a polished PowerPoint content outline as strict JSON with this shape: "
+            '{"title":"...","subtitle":"...","slides":[{"title":"...","bullets":["..."],'
+            '"takeaway":"...","visual_idea":"..."}],"sources":["title — URL"]}. '
+            f"Topic: {topic}\nAudience: {audience}\nStyle: {style}\n"
+            f"Create exactly {slide_count} content slides (cover is added separately). "
+            "Use an engaging opening, logical progression, concrete examples, a useful conclusion, "
+            "2-4 concise non-repetitive bullets per slide, short takeaways, and specific searchable image ideas. "
+            "Keep the wording natural and presentation-ready, not essay paragraphs. Do not invent citations; "
+            "include reliable source URLs only when known. Honor these user requirements: "
+            f"{requirements or 'none'}"
+        )
+        try:
+            from core import gemini
+            outline = gemini.as_json(prompt, tier=gemini.TEXT, timeout_ms=75_000, default=None)
+        except Exception as exc:
+            return f"Could not draft the presentation: {exc}"
+        if not isinstance(outline, dict) or not isinstance(outline.get("slides"), list):
+            return "The presentation outline could not be generated. Check the Gemini model/API error and try again."
+        title = str(outline.get("title") or topic).strip()
+        params["subtitle"] = outline.get("subtitle") or params.get("subtitle", "")
+        params["sources"] = outline.get("sources") or params.get("sources") or []
+        slides = outline["slides"]
+    if not title:
+        title = topic
     if not isinstance(slides, list) or not 2 <= len(slides) <= 20:
         return "Please prepare between 2 and 20 content slides before creating the deck."
 
@@ -214,16 +324,25 @@ def run(parameters: dict) -> str:
     prs.core_properties.author = "JARVIS"
 
     _cover(prs, title, params.get("subtitle", ""), topic)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        image_futures = [pool.submit(_commons_image, item, topic) for item in slides]
+        images = [future.result() for future in image_futures]
     for number, item in enumerate(slides, 1):
         if not isinstance(item, dict):
             return f"Slide {number} is invalid; each slide needs a title and bullet list."
         if not str(item.get("title") or "").strip():
             return f"Slide {number} is missing a title."
-        _content_slide(prs, item, number, len(slides))
+        _content_slide(prs, item, number, len(slides), images[number - 1])
 
-    sources = params.get("sources") or []
-    if isinstance(sources, list) and sources:
-        _sources_slide(prs, sources)
+    sources = list(params.get("sources") or [])
+    sources.extend(
+        f"Image credit: {image['credit']} — {image['source']}"
+        for image in images if image
+    )
+    if sources:
+        chunks = [sources[i:i + 12] for i in range(0, len(sources), 12)]
+        for page, chunk in enumerate(chunks, 1):
+            _sources_slide(prs, chunk, page, len(chunks))
 
     folder = _ROOT / "downloads" / "presentations"
     folder.mkdir(parents=True, exist_ok=True)
