@@ -30,7 +30,7 @@ from PyQt6.QtGui import (
     QIcon, QPen, QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QDialog,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QDialog,
     QInputDialog, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
@@ -3109,6 +3109,7 @@ class JarvisSettingsHub(_HudOverlay):
             ("🔐  FACE SECURITY",   "PIN-protected face authentication & authorized faces"),
             ("📱  REMOTE ACCESS",   "Mobile Phone Pairing & Telemetry QR"),
             ("🔒  JARVIS LOCK SYSTEM", "Face, Master PIN & Voice Unlock Security"),
+            ("📍  PRIVACY & PERMISSIONS", "Device location permission and privacy controls"),
         ]
 
         self._tab_buttons = []
@@ -3150,6 +3151,7 @@ class JarvisSettingsHub(_HudOverlay):
         self._stack.addWidget(self._build_face_security_tab())
         self._stack.addWidget(self._build_remote_tab())
         self._stack.addWidget(self._build_lock_system_tab())
+        self._stack.addWidget(self._build_privacy_tab())
 
         body.addWidget(self._stack, stretch=1)
         root.addLayout(body, stretch=1)
@@ -4863,6 +4865,62 @@ class JarvisSettingsHub(_HudOverlay):
         self._voice_capture_dialog = None
         return scroll
 
+    def _build_privacy_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(4, 4, 12, 4)
+        lay.setSpacing(10)
+
+        card, c_lay = self._card_frame()
+        c_lay.addWidget(self._sec_label("📍  DEVICE LOCATION PERMISSION"))
+        note = self._dim_label(
+            "Choose whether JARVIS asks each time, always allows device location, or blocks it. "
+            "Location is used to mark your position and load local weather."
+        )
+        note.setWordWrap(True)
+        c_lay.addWidget(note)
+        self._location_permission_combo = QComboBox()
+        self._location_permission_combo.addItem("Ask me each time", "ask")
+        self._location_permission_combo.addItem("Always allow", "allow")
+        self._location_permission_combo.addItem("Always block", "deny")
+        self._location_permission_combo.setFixedHeight(34)
+        self._location_permission_combo.setStyleSheet(
+            f"QComboBox {{ color:{C.WHITE}; background:{C.PANEL2}; border:1px solid {C.BORDER}; padding:5px; }}"
+        )
+        pref = str(_read_full_config().get("location_permission", "ask"))
+        idx = self._location_permission_combo.findData(pref)
+        self._location_permission_combo.setCurrentIndex(max(0, idx))
+        c_lay.addWidget(self._location_permission_combo)
+        self._location_permission_status = self._dim_label("")
+        self._location_permission_status.setWordWrap(True)
+        c_lay.addWidget(self._location_permission_status)
+
+        save = QPushButton("SAVE LOCATION PERMISSION")
+        save.setFixedHeight(34)
+        save.setFont(QFont(UI_FONT, 8, QFont.Weight.Bold))
+        save.clicked.connect(self._save_location_permission_setting)
+        c_lay.addWidget(save)
+        lay.addWidget(card)
+        lay.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _save_location_permission_setting(self):
+        preference = str(self._location_permission_combo.currentData() or "ask")
+        try:
+            self._main._location_globe.set_location_permission_policy(preference)
+            message = {
+                "ask": "JARVIS will ask next time location is requested.",
+                "allow": "JARVIS will allow device location without asking.",
+                "deny": "JARVIS will block device location without asking.",
+            }.get(preference, "Location permission saved.")
+            self._location_permission_status.setText(message)
+        except OSError as exc:
+            self._location_permission_status.setText(f"Could not save the permission setting: {exc}")
+
     def _open_voice_challenge_editor(self, challenge_id: str | None = None):
         if not self._voice_settings_unlocked:
             return
@@ -4986,6 +5044,7 @@ class JarvisSettingsHub(_HudOverlay):
             "face": 5, "face_security": 5, "security": 5, 5: 5,
             "remote": 6, "telemetry": 6, 6: 6,
             "lock": 7, "lock_system": 7, "jarvis_lock": 7, 7: 7,
+            "privacy": 8, "permissions": 8, "location_permission": 8, 8: 8,
         }
         idx = tab_map.get(tab_identifier, 0)
         self._active_tab_idx = idx
@@ -5007,6 +5066,11 @@ class JarvisSettingsHub(_HudOverlay):
         elif idx == 7:
             self._lock_voice_settings_ui()
             self._refresh_voice_lock_ui()
+        elif idx == 8:
+            preference = str(_read_full_config().get("location_permission", "ask"))
+            self._location_permission_combo.setCurrentIndex(
+                max(0, self._location_permission_combo.findData(preference))
+            )
 
     def _refresh_tab_styles(self):
         for idx, btn in enumerate(self._tab_buttons):
@@ -5078,16 +5142,34 @@ class JarvisSettingsHub(_HudOverlay):
 
 class _LocationBridge(QObject):
     report = pyqtSignal(str)
+    live_layer_requested = pyqtSignal(str, bool)
+    viewport_reported = pyqtSignal(str)
+    map_status_requested = pyqtSignal(str)
 
     @pyqtSlot(str)
     def reportLocation(self, payload: str):
         self.report.emit(payload[:8000])
 
+    @pyqtSlot(str, bool)
+    def requestLiveLayer(self, layer: str, enabled: bool):
+        if layer in {"flights", "ships"}:
+            self.live_layer_requested.emit(layer, bool(enabled))
+
+    @pyqtSlot(str)
+    def reportViewport(self, payload: str):
+        self.viewport_reported.emit(payload[:2000])
+
+    @pyqtSlot(str)
+    def reportMapStatus(self, message: str):
+        self.map_status_requested.emit(message[:300])
+
 
 class LocationGlobe(QWidget):
-    """In-app satellite globe with search, location permission, and flight animation."""
+    """JARVIS live map with location, weather, ADS-B aircraft, and AIS vessels."""
     close_requested = pyqtSignal()
     location_report = pyqtSignal(str)
+    _aircraft_received = pyqtSignal(str)
+    _ships_received = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5096,6 +5178,18 @@ class LocationGlobe(QWidget):
         self._started = False
         self._mode = "earth"
         self._request_id = ""
+        self._location_origin = None
+        self._pending_live_layers: list[str] = []
+        self._live_layers: set[str] = set()
+        self._viewport = (20.0, 20.0, 2.0)
+        self._live_fetching = False
+        self._ais_key = ""
+        self._ship_stop = threading.Event()
+        self._ship_restart = threading.Event()
+        self._ship_lock = threading.Lock()
+        self._ship_contacts: dict[str, dict] = {}
+        self._ship_subscription_center: tuple[float, float, float] | None = None
+        self._ship_thread: threading.Thread | None = None
         self.setStyleSheet(f"background: {C.BG};")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(7, 6, 7, 7)
@@ -5124,8 +5218,15 @@ class LocationGlobe(QWidget):
 
         self.view = QWebEngineView(self)
         self.page = self.view.page()
+        self._set_profile_to_ask_every_time()
         self._bridge = _LocationBridge(self)
         self._bridge.report.connect(self.location_report)
+        self.location_report.connect(self._location_reported)
+        self._bridge.live_layer_requested.connect(self._live_layer_changed)
+        self._bridge.viewport_reported.connect(self._viewport_reported)
+        self._bridge.map_status_requested.connect(self._set_map_status)
+        self._aircraft_received.connect(self._show_aircraft)
+        self._ships_received.connect(self._show_ships)
         self._channel = QWebChannel(self.page)
         self._channel.registerObject("jarvisBridge", self._bridge)
         self.page.setWebChannel(self._channel)
@@ -5141,6 +5242,13 @@ class LocationGlobe(QWidget):
             self.page.featurePermissionRequested.connect(self._legacy_permission_requested)
         self.view.loadFinished.connect(self._page_loaded)
         layout.addWidget(self.view, 1)
+        self._aircraft_timer = QTimer(self)
+        self._aircraft_timer.setInterval(15000)
+        self._aircraft_timer.timeout.connect(self._refresh_aircraft)
+        self._viewport_timer = QTimer(self)
+        self._viewport_timer.setSingleShot(True)
+        self._viewport_timer.setInterval(700)
+        self._viewport_timer.timeout.connect(self._refresh_aircraft)
 
     def _add_button(self, bar, label: str, callback):
         button = QPushButton(label)
@@ -5154,9 +5262,10 @@ class LocationGlobe(QWidget):
         button.clicked.connect(callback)
         bar.addWidget(button)
 
-    def navigate(self, place: str = "", request_id: str = ""):
+    def navigate(self, place: str = "", request_id: str = "", live_layers=None):
         query = str(place or "").strip()
         self._request_id = str(request_id or "")
+        self._pending_live_layers = [x for x in (live_layers or []) if x in {"flights", "ships"}]
         words = set(re.findall(r"[a-z]+", query.lower()))
         body_aliases = {
             "sun": ("sun", "sol"), "mercury": ("mercury",),
@@ -5197,17 +5306,252 @@ class LocationGlobe(QWidget):
             QTimer.singleShot(500, self._run_pending)
 
     def _run_pending(self):
-        if not self._loaded or self._pending is None:
+        if not self._loaded:
             return
-        place, self._pending = self._pending, None
-        if place:
+        if self._pending is not None:
+            place, self._pending = self._pending, None
+            import json as _json
+            if place:
+                self.view.page().runJavaScript(
+                    f"window.jarvisFlyTo({_json.dumps(place)}, {_json.dumps(self._request_id)});"
+                )
+            else:
+                self.view.page().runJavaScript(f"window.jarvisLocate({_json.dumps(self._request_id)});")
+        if self._pending_live_layers:
             import json as _json
             self.view.page().runJavaScript(
-                f"window.jarvisFlyTo({_json.dumps(place)}, {_json.dumps(self._request_id)});"
+                f"window.jarvisSetLiveLayers({_json.dumps(self._pending_live_layers)});"
             )
-        else:
-            import json as _json
-            self.view.page().runJavaScript(f"window.jarvisLocate({_json.dumps(self._request_id)});")
+            self._pending_live_layers = []
+
+    def _set_map_status(self, message: str):
+        import json as _json
+        if self._loaded and self._mode == "earth":
+            self.view.page().runJavaScript(f"window.jarvisLiveStatus({_json.dumps(message)});")
+
+    def _location_reported(self, payload: str):
+        try:
+            report = json.loads(payload)
+            self._viewport = (float(report["longitude"]), float(report["latitude"]), 12.0)
+        except (ValueError, TypeError, KeyError):
+            return
+        if "flights" in self._live_layers:
+            self._viewport_timer.start()
+        if "ships" in self._live_layers:
+            self._ship_restart.set()
+
+    def _viewport_reported(self, payload: str):
+        try:
+            view = json.loads(payload)
+            center = view.get("center") or []
+            self._viewport = (float(center[0]), float(center[1]), float(view.get("zoom", 2)))
+        except (ValueError, TypeError, IndexError):
+            return
+        if "flights" in self._live_layers:
+            self._viewport_timer.start()
+        if "ships" in self._live_layers:
+            old = self._ship_subscription_center
+            if old is None:
+                self._ship_restart.set()
+            else:
+                old_lon, old_lat, old_zoom = old
+                span = 8.0 if old_zoom < 4 else 3.0 if old_zoom < 7 else 1.0
+                moved_km = math.hypot((self._viewport[0]-old_lon)*111*math.cos(math.radians(old_lat)),
+                                      (self._viewport[1]-old_lat)*111)
+                if moved_km > span*111*0.65 or abs(self._viewport[2]-old_zoom) > 2:
+                    self._ship_restart.set()
+
+    def _live_layer_changed(self, layer: str, enabled: bool):
+        if layer == "flights":
+            if enabled:
+                self._live_layers.add(layer)
+                self._aircraft_timer.start()
+                self._refresh_aircraft()
+                self._set_map_status("LIVE ADS-B AIRCRAFT · Refreshing every 15 seconds")
+            else:
+                self._live_layers.discard(layer)
+                self._aircraft_timer.stop()
+                self._viewport_timer.stop()
+                self._set_map_status("LIVE AIRCRAFT · Off")
+            return
+        if layer != "ships":
+            return
+        if not enabled:
+            self._live_layers.discard("ships")
+            self._ship_stop.set()
+            self._ship_restart.set()
+            self._set_map_status("LIVE SHIPS · Off")
+            return
+        config = _read_full_config()
+        key = str(config.get("aisstream_api_key", "") or self._ais_key).strip()
+        if not key:
+            key, ok = QInputDialog.getText(
+                self, "LIVE SHIP TRACKING",
+                "AISStream API key (required). JARVIS sends the selected map area to AISStream for live vessel reports:",
+                QLineEdit.EchoMode.Password,
+            )
+            key = key.strip()
+            if not ok or not key:
+                self._set_layer_from_native("ships", False)
+                self._set_map_status("LIVE SHIPS · Add an AISStream key to enable this layer")
+                return
+            from PyQt6.QtWidgets import QMessageBox
+            remember = QMessageBox.question(
+                self, "SAVE AISSTREAM KEY?",
+                "Save this key in the local config/api_keys.json file so live ships can start automatically next time?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) == QMessageBox.StandardButton.Yes
+            if remember:
+                config["aisstream_api_key"] = key
+                try:
+                    API_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+                except OSError:
+                    self._set_map_status("LIVE SHIPS · Could not save the key; this session can still use it")
+        self._ais_key = key
+        self._live_layers.add("ships")
+        self._ship_stop.clear()
+        self._ship_restart.set()
+        self._ensure_ship_worker()
+        self._set_map_status("LIVE AIS VESSELS · Connecting to AISStream")
+
+    def _set_layer_from_native(self, layer: str, enabled: bool):
+        import json as _json
+        if self._loaded and self._mode == "earth":
+            self.view.page().runJavaScript(
+                f"window.jarvisSetLayerState({_json.dumps(layer)}, {str(bool(enabled)).lower()});"
+            )
+
+    def _refresh_aircraft(self):
+        if "flights" not in self._live_layers or self._live_fetching:
+            return
+        lon, lat, zoom = self._viewport
+        radius_nm = 150 if zoom < 4 else 70 if zoom < 7 else 25 if zoom < 10 else 12
+        self._live_fetching = True
+
+        def fetch():
+            try:
+                from urllib.request import Request, urlopen
+                url = f"https://api.adsb.lol/v2/point/{lat:.5f}/{lon:.5f}/{radius_nm}"
+                request = Request(url, headers={"User-Agent": "JarvisLiveMap/1.0", "Accept": "application/json"})
+                with urlopen(request, timeout=12) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                aircraft = data.get("ac") or data.get("aircraft") or []
+                aircraft = [a for a in aircraft if isinstance(a, dict)
+                            and isinstance(a.get("lat"), (int, float))
+                            and isinstance(a.get("lon"), (int, float))
+                            and not (isinstance(a.get("seen_pos"), (int, float)) and a["seen_pos"] > 90)]
+                self._aircraft_received.emit(json.dumps(aircraft[:500], separators=(",", ":")))
+            except Exception as exc:
+                self._aircraft_received.emit(json.dumps({"error": str(exc)}))
+
+        threading.Thread(target=fetch, name="jarvis-aircraft-feed", daemon=True).start()
+
+    def _show_aircraft(self, payload: str):
+        self._live_fetching = False
+        if "flights" not in self._live_layers or not self._loaded:
+            return
+        import json as _json
+        try:
+            data = json.loads(payload)
+            if isinstance(data, dict) and data.get("error"):
+                self._set_map_status("LIVE AIRCRAFT · Feed temporarily unavailable")
+                return
+            self.view.page().runJavaScript(f"window.jarvisSetAircraft({_json.dumps(data)});")
+            self._set_map_status(f"LIVE ADS-B AIRCRAFT · {len(data)} contacts · updated {time.strftime('%H:%M:%S')}")
+        except (ValueError, TypeError):
+            pass
+
+    def _ensure_ship_worker(self):
+        if self._ship_thread and self._ship_thread.is_alive():
+            return
+        self._ship_thread = threading.Thread(target=self._ship_feed_loop, name="jarvis-ais-feed", daemon=True)
+        self._ship_thread.start()
+
+    def _ship_feed_loop(self):
+        try:
+            import websocket
+        except ImportError:
+            self._ships_received.emit(json.dumps({"error": "websocket-client is missing; rerun python setup.py"}))
+            return
+        while not self._ship_stop.is_set():
+            lon, lat, zoom = self._viewport
+            span = 8.0 if zoom < 4 else 3.0 if zoom < 7 else 1.0
+            south, north = max(-90.0, lat - span), min(90.0, lat + span)
+            west, east = max(-180.0, lon - span), min(180.0, lon + span)
+            self._ship_subscription_center = (lon, lat, zoom)
+            sock = None
+            try:
+                sock = websocket.create_connection("wss://stream.aisstream.io/v0/stream", timeout=12)
+                sock.settimeout(1.0)
+                sock.send(json.dumps({
+                    "APIKey": self._ais_key,
+                    "BoundingBoxes": [[[south, west], [north, east]]],
+                    "FilterMessageTypes": ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport", "ShipStaticData", "StaticDataReport"],
+                }))
+                self._bridge.map_status_requested.emit("LIVE AIS VESSELS · Connected, waiting for nearby transponders")
+                last_emit = 0.0
+                while not self._ship_stop.is_set() and not self._ship_restart.is_set():
+                    try:
+                        envelope = json.loads(sock.recv())
+                    except websocket.WebSocketTimeoutException:
+                        envelope = None
+                    except Exception:
+                        break
+                    if envelope:
+                        self._record_ship_message(envelope)
+                    if time.monotonic() - last_emit >= 3:
+                        with self._ship_lock:
+                            rows = list(self._ship_contacts.values())
+                        self._ships_received.emit(json.dumps(rows, separators=(",", ":")))
+                        last_emit = time.monotonic()
+            except Exception as exc:
+                self._ships_received.emit(json.dumps({"error": str(exc)}))
+                self._bridge.map_status_requested.emit("LIVE AIS VESSELS · Connection failed; retrying")
+                self._ship_stop.wait(8)
+            finally:
+                if sock is not None:
+                    try: sock.close()
+                    except Exception: pass
+            self._ship_restart.clear()
+
+    def _record_ship_message(self, envelope: dict):
+        meta = envelope.get("MetaData") or {}
+        message_type = str(envelope.get("MessageType") or "")
+        message = (envelope.get("Message") or {}).get(message_type) or {}
+        mmsi = str(meta.get("MMSI") or message.get("UserID") or "").strip()
+        if not mmsi:
+            return
+        with self._ship_lock:
+            row = self._ship_contacts.setdefault(mmsi, {"mmsi": mmsi, "name": "", "destination": ""})
+            row["name"] = meta.get("ShipName") or row.get("name") or mmsi
+            if message_type in {"PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport"}:
+                lat = message.get("Latitude", meta.get("latitude"))
+                lon = message.get("Longitude", meta.get("longitude"))
+                if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                    row.update({"lat": lat, "lon": lon, "speed": message.get("Sog", message.get("SpeedOverGround", "")),
+                                "track": message.get("Cog", message.get("CourseOverGround", "")),
+                                "type": "AIS vessel", "updated": time.time()})
+            if message_type in {"ShipStaticData", "StaticDataReport"}:
+                row["name"] = message.get("Name") or row["name"]
+                row["destination"] = message.get("Destination") or row.get("destination", "")
+            cutoff = time.time() - 900
+            self._ship_contacts = {key: value for key, value in self._ship_contacts.items()
+                                   if value.get("updated", 0) >= cutoff}
+
+    def _show_ships(self, payload: str):
+        if "ships" not in self._live_layers or not self._loaded:
+            return
+        import json as _json
+        try:
+            data = json.loads(payload)
+            if isinstance(data, dict) and data.get("error"):
+                self._set_map_status("LIVE AIS VESSELS · Feed unavailable; check key and connection")
+                return
+            self.view.page().runJavaScript(f"window.jarvisSetShips({_json.dumps(data)});")
+            self._set_map_status(f"LIVE AIS VESSELS · {len(data)} vessels · updating continuously")
+        except (ValueError, TypeError):
+            pass
 
     def _search(self):
         value = self._place.text().strip()
@@ -5217,43 +5561,103 @@ class LocationGlobe(QWidget):
     def _locate(self):
         self.navigate("")
 
+    def _set_profile_to_ask_every_time(self):
+        """Let JARVIS apply its own saved allow/block/ask preference."""
+        try:
+            profile = self.page.profile()
+            policy = getattr(profile, "PersistentPermissionsPolicy", None)
+            if policy is not None and hasattr(profile, "setPersistentPermissionsPolicy"):
+                profile.setPersistentPermissionsPolicy(policy.AskEveryTime)
+        except (AttributeError, RuntimeError):
+            pass
+
+    def set_location_permission_policy(self, preference: str):
+        preference = preference if preference in {"ask", "allow", "deny"} else "ask"
+        config = _read_full_config()
+        config["location_permission"] = preference
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        API_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+        if preference == "ask":
+            # Clear any remembered WebEngine decision so the next location
+            # request reaches JARVIS's permission panel again.
+            try:
+                from PyQt6.QtWebEngineCore import QWebEnginePermission
+                profile = self.page.profile()
+                permission_type = QWebEnginePermission.PermissionType.Geolocation
+                if hasattr(profile, "listPermissionsForPermissionType"):
+                    for permission in profile.listPermissionsForPermissionType(permission_type):
+                        permission.reset()
+            except (ImportError, AttributeError, RuntimeError):
+                try:
+                    origin = self._location_origin or self.page.url()
+                    self.page.setFeaturePermission(
+                        origin, QWebEnginePage.Feature.Geolocation,
+                        QWebEnginePage.PermissionPolicy.PermissionUnknown,
+                    )
+                except (AttributeError, RuntimeError):
+                    pass
+        self._set_profile_to_ask_every_time()
+
+    def _location_permission_preference(self) -> str:
+        value = str(_read_full_config().get("location_permission", "ask"))
+        return value if value in {"ask", "allow", "deny"} else "ask"
+
+    def _ask_location_permission(self) -> tuple[bool, bool]:
+        from PyQt6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("ALLOW DEVICE LOCATION?")
+        box.setText(
+            "JARVIS will use this PC's location service to mark your position. "
+            "Coordinates are sent to Esri for map tiles, OpenStreetMap for the place name, "
+            "and Open-Meteo for weather. JARVIS does not save them."
+        )
+        allow = box.addButton("ALLOW", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("BLOCK", QMessageBox.ButtonRole.RejectRole)
+        dont_ask = QCheckBox("Don't show me again")
+        box.setCheckBox(dont_ask)
+        box.exec()
+        granted = box.clickedButton() is allow
+        remember = dont_ask.isChecked()
+        try:
+            self.set_location_permission_policy(
+                ("allow" if granted else "deny") if remember else "ask"
+            )
+        except OSError:
+            # Honor this decision for the current request even if configuration
+            # storage is unavailable; the next request will ask again.
+            pass
+        return granted, remember
+
     def _permission_requested(self, permission):
         from PyQt6.QtWebEngineCore import QWebEnginePermission
+        self._location_origin = permission.origin()
         if permission.permissionType() != QWebEnginePermission.PermissionType.Geolocation:
             permission.deny()
             return
-        from PyQt6.QtWidgets import QMessageBox
-        answer = QMessageBox.question(
-            self, "ALLOW DEVICE LOCATION?",
-            "JARVIS will use this PC's location service to mark your position. "
-            "Your coordinates are sent to Esri for map tiles, OpenStreetMap for the place name, "
-            "and Open-Meteo for weather. Jarvis does not save them. Allow location access?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        preference = self._location_permission_preference()
+        if preference == "allow":
             permission.grant()
-        else:
+        elif preference == "deny":
             permission.deny()
+        else:
+            granted, _remember = self._ask_location_permission()
+            (permission.grant if granted else permission.deny)()
 
     def _legacy_permission_requested(self, origin, feature):
+        self._location_origin = origin
         if feature != QWebEnginePage.Feature.Geolocation:
             self.page.setFeaturePermission(
                 origin, feature, QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
             )
             return
-        from PyQt6.QtWidgets import QMessageBox
-        answer = QMessageBox.question(
-            self, "ALLOW DEVICE LOCATION?",
-            "JARVIS will use this PC's location service to mark your position. "
-            "Your coordinates are sent to Esri for map tiles, OpenStreetMap for the place name, "
-            "and Open-Meteo for weather. Jarvis does not save them. Allow location access?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+        preference = self._location_permission_preference()
+        if preference == "ask":
+            granted, _remember = self._ask_location_permission()
+        else:
+            granted = preference == "allow"
         policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
-                  if answer == QMessageBox.StandardButton.Yes
-                  else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
+                  if granted else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
         self.page.setFeaturePermission(origin, feature, policy)
 
 
@@ -5273,7 +5677,7 @@ class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
-    _location_sig   = pyqtSignal(str, str)   # place name and request id
+    _location_sig   = pyqtSignal(str, str, str)   # place, request id, requested live layers
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
@@ -6835,9 +7239,13 @@ class MainWindow(QMainWindow):
         self._content_panel.raise_()
         self._content_btn.setToolTip("Show new assistant results")
 
-    def _show_location(self, place: str, request_id: str):
+    def _show_location(self, place: str, request_id: str, live_layers_json: str):
         self._hud_cam_stack.setCurrentIndex(2)
-        self._location_globe.navigate(place, request_id)
+        try:
+            live_layers = json.loads(live_layers_json or "[]")
+        except (ValueError, TypeError):
+            live_layers = []
+        self._location_globe.navigate(place, request_id, live_layers)
 
     def _on_location_report(self, payload: str):
         try:
@@ -6851,14 +7259,15 @@ class MainWindow(QMainWindow):
                 pending["report"] = report
                 pending["event"].set()
 
-    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0):
+    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0, live_layers=None):
         """Thread-safe map request; optionally wait for geocoding/weather details."""
         request_id = str(time.monotonic_ns()) if wait_for_report else ""
         pending = {"event": threading.Event(), "report": None} if request_id else None
         if pending:
             with self._location_request_lock:
                 self._location_requests[request_id] = pending
-        self._location_sig.emit(str(place or "")[:240], request_id)
+        layers_json = json.dumps([x for x in (live_layers or []) if x in {"flights", "ships"}])
+        self._location_sig.emit(str(place or "")[:240], request_id, layers_json)
         if not pending:
             return None
         try:
@@ -7703,9 +8112,9 @@ class JarvisUI:
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
 
-    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0):
+    def show_location(self, place: str = "", wait_for_report: bool = False, timeout: float = 28.0, live_layers=None):
         """Thread-safe: open the in-app globe and locate or navigate."""
-        return self._win.show_location(place, wait_for_report, timeout)
+        return self._win.show_location(place, wait_for_report, timeout, live_layers)
 
     def prompt_reconfig(self):
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""

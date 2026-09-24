@@ -19,25 +19,46 @@
       pointer-events: none; box-shadow: 0 4px 18px #0008; }
     #details .place { color: #43e8ff; font-size: 14px; font-weight: 700; }
     #details .muted { color: #85aeb8; }
+    #live-controls { position:absolute;z-index:4;top:66px;right:12px;display:flex;gap:5px;flex-direction:column; }
+    #live-controls button { min-width:116px;padding:8px 10px;color:#77dff4;background:#00131dcc;
+      border:1px solid #15556a;border-radius:4px;font:700 10px 'Bahnschrift',sans-serif;cursor:pointer; }
+    #live-controls button.active { color:#001018;background:#42e8d4;border-color:#42e8d4; }
+    #live-counts { position:absolute;z-index:3;right:12px;bottom:30px;padding:7px 9px;color:#d7f8ff;
+      background:#001018dd;border:1px solid #0d6077;border-radius:4px;font:11px 'Bahnschrift',sans-serif; }
   </style>
 </head>
 <body>
   <div id="map"></div><div id="status">SATELLITE GLOBE · Ready</div>
   <div id="details"><span class="muted">Choose MY LOCATION or search a place for local details and current weather.</span></div>
+  <div id="live-controls">
+    <button id="flights-toggle" onclick="toggleLive('flights')">✈  LIVE FLIGHTS · OFF</button>
+    <button id="ships-toggle" onclick="toggleLive('ships')">◆  LIVE SHIPS · OFF</button>
+    <button id="follow-toggle" onclick="toggleFollow()" style="display:none">◎  FOLLOW TARGET</button>
+    <button onclick="refreshLive()">↻  REFRESH CONTACTS</button>
+  </div>
+  <div id="live-counts">LIVE CONTACTS · Flights 0 · Ships 0</div>
   <script src="https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js"
     onerror="document.getElementById('status').textContent='MAP RENDERER UNAVAILABLE · Check internet access'"></script>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
   <script>
     const status = document.getElementById('status');
     let jarvisBridge = null;
+    let liveLayers = {flights:false, ships:false};
+    let followedTarget = null;
+    const aircraftPaths = new Map(), shipPaths = new Map();
     if (window.qt && qt.webChannelTransport) {
-      new QWebChannel(qt.webChannelTransport, channel => { jarvisBridge = channel.objects.jarvisBridge; });
+      new QWebChannel(qt.webChannelTransport, channel => {
+        jarvisBridge = channel.objects.jarvisBridge;
+        for (const layer of ['flights','ships']) if (liveLayers[layer]) jarvisBridge.requestLiveLayer(layer, true);
+        refreshLive();
+      });
     }
     const map = new maplibregl.Map({
       container: 'map',
       style: {
         version: 8,
         projection: {type: 'globe'},
+        glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
         sources: {
           imagery: {
             type: 'raster',
@@ -57,7 +78,112 @@
       center: [20, 20], zoom: 1.6, maxZoom: 22, pitch: 0, attributionControl: true
     });
     map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), 'top-right');
-    map.on('load', () => { map.setFog({}); status.textContent = 'SATELLITE GLOBE · Search a place or locate this device'; });
+    let aircraftCount = 0, shipCount = 0;
+    function updateCounts() {
+      document.getElementById('live-counts').textContent = `LIVE CONTACTS · Flights ${aircraftCount} · Ships ${shipCount}`;
+    }
+    function toggleLive(layer, force) {
+      liveLayers[layer] = typeof force === 'boolean' ? force : !liveLayers[layer];
+      const button = document.getElementById(layer + '-toggle');
+      button.classList.toggle('active', liveLayers[layer]);
+      button.textContent = (layer === 'flights' ? '✈  LIVE FLIGHTS · ' : '◆  LIVE SHIPS · ') + (liveLayers[layer] ? 'ON' : 'OFF');
+      if (jarvisBridge) jarvisBridge.requestLiveLayer(layer, liveLayers[layer]);
+      if (!liveLayers[layer]) {
+        const source = map.getSource(layer === 'flights' ? 'aircraft-source' : 'ships-source');
+        if (source) source.setData({type:'FeatureCollection',features:[]});
+        const trails = map.getSource(layer === 'flights' ? 'aircraft-trail-source' : 'ship-trail-source');
+        if (trails) trails.setData({type:'FeatureCollection',features:[]});
+        if (layer === 'flights') aircraftPaths.clear(); else shipPaths.clear();
+        if (layer === 'flights') aircraftCount = 0; else shipCount = 0;
+        updateCounts();
+      }
+      return liveLayers[layer];
+    }
+    function toggleFollow() {
+      followedTarget = null;
+      document.getElementById('follow-toggle').style.display = 'none';
+      status.textContent = 'TARGET FOLLOW · Off';
+    }
+    window.jarvisSetLiveLayers = layers => {
+      for (const layer of (Array.isArray(layers) ? layers : [])) if (['flights','ships'].includes(layer)) toggleLive(layer, true);
+    };
+    window.jarvisSetLayerState = (layer, enabled) => { if (['flights','ships'].includes(layer)) toggleLive(layer, !!enabled); };
+    window.jarvisLiveStatus = message => { status.textContent = String(message || '').slice(0,180); };
+    window.jarvisLiveEnabled = layer => !!liveLayers[layer];
+    window.refreshLive = () => {
+      if (jarvisBridge) jarvisBridge.reportViewport(JSON.stringify({center:map.getCenter().toArray(),zoom:map.getZoom()}));
+    };
+    map.on('load', () => {
+      map.setFog({});
+      map.addSource('aircraft-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addSource('aircraft-heading-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addSource('aircraft-trail-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addSource('ships-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addSource('ship-trail-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addLayer({id:'aircraft-trails',type:'line',source:'aircraft-trail-source',paint:{'line-color':'#26b9db','line-width':2,'line-opacity':0.48}});
+      map.addLayer({id:'aircraft-headings',type:'line',source:'aircraft-heading-source',paint:{'line-color':'#66e8ff','line-width':1.5,'line-opacity':0.8}});
+      map.addLayer({id:'aircraft-dots',type:'circle',source:'aircraft-source',paint:{'circle-radius':['interpolate',['linear'],['zoom'],2,3,9,6],'circle-color':'#43dfff','circle-stroke-color':'#00131a','circle-stroke-width':1.5}});
+      map.addLayer({id:'aircraft-labels',type:'symbol',source:'aircraft-source',minzoom:3,layout:{'text-field':['get','flight'],'text-font':['Open Sans Regular'],'text-size':10,'text-offset':[0,1.2],'text-optional':true},paint:{'text-color':'#d9fbff','text-halo-color':'#001018','text-halo-width':1.2}});
+      map.addLayer({id:'ship-dots',type:'circle',source:'ships-source',paint:{'circle-radius':['interpolate',['linear'],['zoom'],2,3,9,6],'circle-color':'#ffd34e','circle-stroke-color':'#1d1700','circle-stroke-width':1.5}});
+      map.addLayer({id:'ship-trails',type:'line',source:'ship-trail-source',paint:{'line-color':'#f3c641','line-width':2,'line-opacity':0.5}});
+      map.addLayer({id:'ship-labels',type:'symbol',source:'ships-source',minzoom:3,layout:{'text-field':['get','name'],'text-font':['Open Sans Regular'],'text-size':10,'text-offset':[0,1.2],'text-optional':true},paint:{'text-color':'#ffe998','text-halo-color':'#171100','text-halo-width':1.2}});
+      for (const [layer, title] of [['aircraft-dots','AIRCRAFT'],['ship-dots','VESSEL']]) map.on('click',layer,e=>{
+        const f=e.features?.[0]; if (!f) return; const p=f.properties||{};
+        followedTarget={layer:layer==='aircraft-dots'?'flights':'ships',id:String(p.hex||p.mmsi||p.flight||p.name||'')};
+        const followButton=document.getElementById('follow-toggle');
+        followButton.textContent='◎  STOP FOLLOWING';
+        followButton.style.display='block';
+        status.textContent=`TRACKING ${p.flight||p.name||p.hex||p.mmsi||title} · Live position updates`;
+        const body=layer==='aircraft-dots'?`${p.flight||'Unknown flight'} · ${p.type||'Aircraft'}\n${p.altitude||'Altitude unknown'} · ${p.speed||'Speed unknown'} · heading ${p.track||'unknown'}°\n${p.route||'Route unavailable'}\nSeen ${p.seen||'?'} sec ago`:`${p.name||'Unknown vessel'} · ${p.type||'Vessel'}\n${p.destination||'Destination unavailable'} · speed ${p.speed||'?'} kn · heading ${p.track||'?'}°`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setText(body).addTo(map);
+      });
+      map.on('moveend',()=>{ if (jarvisBridge && (liveLayers.flights||liveLayers.ships)) refreshLive(); });
+      status.textContent = 'SATELLITE GLOBE · Search a place or locate this device';
+    });
+    function makeHeading(lon,lat,track) {
+      if (!Number.isFinite(track)) return null;
+      const d=0.006, brng=track*Math.PI/180, p1=lat*Math.PI/180, l1=lon*Math.PI/180;
+      const p2=Math.asin(Math.sin(p1)*Math.cos(d)+Math.cos(p1)*Math.sin(d)*Math.cos(brng));
+      const l2=l1+Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(p1),Math.cos(d)-Math.sin(p1)*Math.sin(p2));
+      return {type:'Feature',geometry:{type:'LineString',coordinates:[[lon,lat],[((l2*180/Math.PI+540)%360)-180,p2*180/Math.PI]]},properties:{}};
+    }
+    window.jarvisSetAircraft = data => {
+      if (!liveLayers.flights || !map.getSource('aircraft-source')) return;
+      const rows=Array.isArray(data)?data:[];
+      const features=[],heads=[],trails=[],activeIds=new Set();
+      for (const a of rows) {
+        const lon=Number(a.lon),lat=Number(a.lat); if(!Number.isFinite(lon)||!Number.isFinite(lat)) continue;
+        const flight=String(a.flight||'').trim();
+        const id=String(a.hex||flight||`${lat},${lon}`);
+        activeIds.add(id);
+        features.push({type:'Feature',geometry:{type:'Point',coordinates:[lon,lat]},properties:{hex:id,flight,type:a.t||'',altitude:typeof a.alt_baro==='number'?`${a.alt_baro} ft`:'Ground/unknown',speed:typeof a.gs==='number'?`${Math.round(a.gs)} kt`:'unknown',track:a.track,seen:a.seen_pos,route:a.route||'Route unavailable'}});
+        const old=aircraftPaths.get(id)||[]; if(!old.length||Math.abs(old[old.length-1][0]-lon)+Math.abs(old[old.length-1][1]-lat)>0.002) old.push([lon,lat]);
+        aircraftPaths.set(id,old.slice(-18));
+        if(old.length>1) trails.push({type:'Feature',geometry:{type:'LineString',coordinates:old.slice(-18)},properties:{}});
+        const h=makeHeading(lon,lat,Number(a.track)); if(h) heads.push(h);
+        if(followedTarget?.layer==='flights'&&followedTarget.id===id) map.easeTo({center:[lon,lat],duration:700});
+      }
+      for (const key of aircraftPaths.keys()) if (!activeIds.has(key)) aircraftPaths.delete(key);
+      map.getSource('aircraft-source').setData({type:'FeatureCollection',features});
+      map.getSource('aircraft-heading-source').setData({type:'FeatureCollection',features:heads});
+      map.getSource('aircraft-trail-source').setData({type:'FeatureCollection',features:trails});
+      aircraftCount=features.length; updateCounts();
+    };
+    window.jarvisSetShips = data => {
+      if (!liveLayers.ships || !map.getSource('ships-source')) return;
+      const rows=Array.isArray(data)?data:[];
+      const activeIds=new Set(),trails=[], features=rows.filter(a=>Number.isFinite(Number(a.lon))&&Number.isFinite(Number(a.lat))).map(a=>{
+        const id=String(a.mmsi||a.name||''); const lon=Number(a.lon),lat=Number(a.lat);
+        activeIds.add(id);
+        const old=shipPaths.get(id)||[]; if(!old.length||Math.abs(old[old.length-1][0]-lon)+Math.abs(old[old.length-1][1]-lat)>0.002) old.push([lon,lat]);
+        shipPaths.set(id,old.slice(-18)); if(old.length>1) trails.push({type:'Feature',geometry:{type:'LineString',coordinates:old.slice(-18)},properties:{}});
+        if(followedTarget?.layer==='ships'&&followedTarget.id===id) map.easeTo({center:[lon,lat],duration:700});
+        return {type:'Feature',geometry:{type:'Point',coordinates:[lon,lat]},properties:{mmsi:id,name:a.name||id||'Vessel',type:a.type||'Vessel',destination:a.destination||'Destination unavailable',speed:a.speed||'',track:a.track||''}};
+      });
+      for (const key of shipPaths.keys()) if (!activeIds.has(key)) shipPaths.delete(key);
+      map.getSource('ships-source').setData({type:'FeatureCollection',features});
+      map.getSource('ship-trail-source').setData({type:'FeatureCollection',features:trails}); shipCount=features.length; updateCounts();
+    };
     // Individual imagery tiles may be absent at a location/zoom. Keep the map
     // useful and retain the closest available imagery instead of replacing the
     // location status with a frightening "data not found" message.

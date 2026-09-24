@@ -137,7 +137,7 @@ The following actions are registered from `actions/`:
 | File processor | Processes supplied files, including supported images, PDFs, documents, spreadsheets, code, audio, video, and archives. |
 | Flight finder | Searches Google Flights for route options. |
 | Game updater | Lists, installs, updates, or checks supported Steam and Epic games. |
-| Location control | Shows device location or navigates to a named Earth place on the in-app globe; can open the solar-system viewer for planets and moons. |
+| Location control | Shows device location and weather on the JARVIS globe; can turn on live ADS-B aircraft and AIS ship layers, select a contact to follow its position/trail, navigate to Earth places, or open the solar-system viewer. Location permission can be set to ask, always allow, or always block in Settings → Privacy & Permissions. AIS ship tracking requires an AISStream key. |
 | Open app | Opens a requested app or website. YouTube playback uses the dedicated YouTube action. |
 | Reminder | Schedules a timed reminder using the operating system's scheduler. |
 | Feedback saver | Saves a JARVIS bug report or feedback locally when explicitly requested. |
@@ -145,6 +145,7 @@ The following actions are registered from `actions/`:
 | System information | Reads available PC identity, OS, battery, CPU, memory, storage, and graphics details when asked. |
 | Weather | Retrieves a weather report from the configured online source. |
 | Web search | Searches current web information, news, research topics, prices, and comparisons. |
+| World watch | Spoken/data workflows: aircraft lookup by location or callsign, weather/wind, USGS earthquakes, NOAA cyclones, scheduled launches, CelesTrak satellite pass times/catalog (Skyfield), NASA FIRMS fires (MAP_KEY required), OSRM driving/walking/cycling directions, OpenStreetMap mapped infrastructure/camera/ALPR locations, Radio Browser stations, and sourced area briefings. Public coverage and update delays vary. AIS ship tracking requires an AISStream key; live traffic speed, transit, and bikeshare feeds are not configured. |
 | YouTube | Searches and plays videos/music, and supports available info, trending, and summary requests. |
 
 ## Assistant-integrated tools and background services

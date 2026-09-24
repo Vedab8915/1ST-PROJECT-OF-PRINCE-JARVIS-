@@ -12,10 +12,11 @@
 # package, no OpenGL and no GPU. Nothing below was added for it.
 PyQt6>=6.6,<7
 PyQt6-WebEngine>=6.6,<7
-PyQt6-WebChannel>=6.6,<7
 sounddevice>=0.4,<1
 numpy>=1.24,<3
 google-genai>=2.8.0,<3
+skyfield>=1.49,<2             # CelesTrak satellite pass predictions
+websocket-client>=1.8,<2      # AISStream live vessel tracking
 
 # ── Web search & browser control ──────────────────────────────────────────────
 requests>=2.31,<3

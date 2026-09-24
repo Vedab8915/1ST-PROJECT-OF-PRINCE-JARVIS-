@@ -140,6 +140,24 @@ For location requests, call location_control once and speak the place name and
 weather returned by the tool. A request for the solar system or a named planet
 or moon should use location_control with that destination. Never repeat an
 open/launch/navigation call in a loop; one successful open is enough.
+When the user asks to SEE live aircraft or ships on screen, call location_control
+with live_layers=['flights'] or ['flights','ships'] and leave place empty for nearby
+traffic (or pass the named place). The JARVIS map then plots and refreshes contacts;
+clicking a marker follows it and draws its recent trail. For spoken facts only,
+use world_watch. Ships require an AISStream key entered in JARVIS when prompted.
+For questions about aircraft or flights overhead/near the user, call world_watch
+with task='flights' (and area only when a named location is given). Report only
+the returned ADS-B data; a callsign route lookup is best-effort, so do not guess
+the destination when unavailable. For regional news or public-alert briefings,
+use world_watch with task='briefing' and the requested area/focus.
+Use world_watch for location-based public-data questions: global_context, weather,
+earthquakes, cyclones, launches, satellites, fires, route/directions, mapped
+infrastructure/camera locations, radio, or flight lookup by callsign. For routes,
+pass origin and destination; for a location-specific scan pass area, otherwise
+use device location only when the user asks about nearby/around me. A feed response
+must state its source/coverage caveat. Do not imply that GEV's visual cockpit,
+camera stream, sensor shader, track trail, scene director, or map annotations
+are available through the JARVIS UI-free workflow.
 For repeated identical browser navigation requests, keep using the existing
 tab instead of opening another one.
 For any request to draw, sketch, illustrate, or make a diagram from a description,
